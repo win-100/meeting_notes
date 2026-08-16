@@ -14,6 +14,7 @@ from meeting_minutes.asr import transcribe
 from meeting_minutes.audio import prepare_audio
 from meeting_minutes.diarization import diarize
 from meeting_minutes.ollama_client import Ollama
+from meeting_minutes.subtitles import transcript_as_srt
 
 
 load_dotenv()
@@ -148,6 +149,13 @@ if "segments" in st.session_state:
         data=transcript,
         file_name="transcript-diarise.txt",
         mime="text/plain",
+    )
+    st.download_button(
+        "Télécharger les sous-titres VLC (.srt)",
+        data=transcript_as_srt(segments, mappings),
+        file_name="transcript-diarise.srt",
+        mime="application/x-subrip",
+        help="Dans VLC : Sous-titres > Ajouter un fichier de sous-titres.",
     )
 
     with st.expander("Transcript diarisé", expanded=True):

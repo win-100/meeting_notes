@@ -59,7 +59,11 @@ Dans l'interface :
 2. indiquez les participants si vous les connaissez ;
 3. lancez la préparation, la transcription et la diarisation ;
 4. associez les identifiants de locuteurs aux participants ;
-5. choisissez un modèle Ollama et générez le compte-rendu.
+5. téléchargez le transcript texte ou les sous-titres `.srt` (compatibles VLC) ;
+6. choisissez un modèle Ollama et générez le compte-rendu.
+
+Pour afficher le fichier téléchargé dans VLC, ouvrez la vidéo puis sélectionnez
+**Sous-titres > Ajouter un fichier de sous-titres** et choisissez le `.srt`.
 
 ## Fonctionnement
 
