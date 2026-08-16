@@ -1,2 +1,6 @@
 [server]
 fileWatcherType = "none"
+# The browser component returns the compressed audio as a component value.  A
+# 2 h 30 meeting encoded as 48 kb/s MP3 is normally below this 200 MB limit,
+# even after base64 encoding.
+maxMessageSize = 200

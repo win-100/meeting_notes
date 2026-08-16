@@ -55,7 +55,8 @@ streamlit run app.py
 
 Dans l'interface :
 
-1. importez un fichier `.mp3`, `.wav`, `.m4a`, `.mp4` ou `.mkv` ;
+1. importez un fichier audio (`.mp3`, `.wav`, `.m4a`) ou choisissez une vidéo
+   (`.mp4`, `.mkv`) dans le convertisseur navigateur ;
 2. indiquez les participants si vous les connaissez ;
 3. lancez la préparation, la transcription et la diarisation ;
 4. associez les identifiants de locuteurs aux participants ;
@@ -64,6 +65,21 @@ Dans l'interface :
 
 Pour afficher le fichier téléchargé dans VLC, ouvrez la vidéo puis sélectionnez
 **Sous-titres > Ajouter un fichier de sous-titres** et choisissez le `.srt`.
+
+### Vidéos : conversion dans le navigateur
+
+Une vidéo est convertie en MP3 mono 16 kHz directement dans le navigateur ;
+le processus Python ne reçoit donc que l'audio. Le premier usage télécharge le
+convertisseur WebAssembly depuis jsDelivr. Pour les enregistrements longs, la
+conversion demande de la mémoire et est recommandée sur ordinateur. Le fichier
+audio résultant est ensuite transmis à Streamlit, dont la limite de message par
+défaut peut nécessiter d'être augmentée pour les réunions très longues :
+
+```toml
+# .streamlit/config.toml
+[server]
+maxMessageSize = 200
+```
 
 ## Fonctionnement
 

@@ -1,5 +1,6 @@
 import os
 import uuid
+import base64
 from html import escape
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from meeting_minutes.alignment import (
 )
 from meeting_minutes.asr import transcribe
 from meeting_minutes.audio import prepare_audio
+from meeting_minutes.browser_audio_uploader import video_audio_uploader
 from meeting_minutes.diarization import diarize
 from meeting_minutes.ollama_client import Ollama
 from meeting_minutes.subtitles import transcript_as_srt
@@ -84,10 +86,19 @@ except Exception:
     models = []
     st.warning("Ollama n'est pas accessible.")
 
-upload = st.file_uploader(
-    "Fichier de réunion",
-    type=["mp3", "wav", "m4a", "mp4", "mkv"],
-)
+upload = st.file_uploader("Fichier audio", type=["mp3", "wav", "m4a"])
+video_audio = video_audio_uploader(key="local_video_to_audio")
+
+if video_audio and not upload:
+    try:
+        upload = {
+            "name": video_audio["name"],
+            "data": base64.b64decode(video_audio["data"], validate=True),
+        }
+        st.success(f"✓ Audio extrait localement : {upload['name']}")
+    except (KeyError, ValueError) as error:
+        st.error(f"Audio extrait par le navigateur invalide : {error}")
+        upload = None
 participants = st.text_area("Participants (un par ligne)").splitlines()
 expected = st.checkbox(
     "Utiliser ce nombre comme nombre de locuteurs attendu",
@@ -98,8 +109,8 @@ if upload and st.button("Préparer, transcrire et diariser"):
     work = Path("work") / str(uuid.uuid4())
     work.mkdir(parents=True)
 
-    source = work / upload.name
-    source.write_bytes(upload.getbuffer())
+    source = work / (upload["name"] if isinstance(upload, dict) else upload.name)
+    source.write_bytes(upload["data"] if isinstance(upload, dict) else upload.getbuffer())
 
     try:
         wav, mp3 = prepare_audio(source, work)

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: sans-serif; margin: 0; color: #31333f; }
+    label { display: block; font-weight: 600; margin-bottom: .45rem; }
+    input { max-width: 100%; }
+    #status { margin-top: .55rem; font-size: .9rem; color: #555; }
+    progress { display: none; width: 100%; margin-top: .4rem; }
+    .error { color: #b00020; }
+  </style>
+</head>
+<body>
+  <label for="video">Vidéo de réunion (traitée dans ce navigateur)</label>
+  <input id="video" type="file" accept="video/mp4,video/x-matroska,.mp4,.mkv">
+  <progress id="progress" max="100" value="0"></progress>
+  <div id="status">La vidéo ne sera pas envoyée : seul un MP3 sera transmis après conversion.</div>
+
+  <script type="module">
+    const input = document.getElementById("video");
+    const status = document.getElementById("status");
+    const progress = document.getElementById("progress");
+
+    function send(type, data) {
+      window.parent.postMessage({ isStreamlitMessage: true, type, ...data }, "*");
+    }
+    function setHeight() { send("streamlit:setFrameHeight", { height: document.body.scrollHeight }); }
+    function show(message, error = false) {
+      status.textContent = message;
+      status.className = error ? "error" : "";
+      setHeight();
+    }
+    function bytesToBase64(bytes) {
+      const partSize = 0x8000;
+      let binary = "";
+      for (let offset = 0; offset < bytes.length; offset += partSize) {
+        binary += String.fromCharCode(...bytes.subarray(offset, offset + partSize));
+      }
+      return btoa(binary);
+    }
+    async function loadFFmpeg() {
+      const { FFmpeg } = await import("https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js");
+      const { toBlobURL } = await import("https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js");
+      // The component worker is an ES module.  Passing it the ESM core makes
+      // its dynamic import work in Firefox (the UMD build has no default ESM
+      // export and triggers "failed to import ffmpeg-core.js").
+      const base = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm";
+      const packageBase = "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm";
+      // Streamlit runs components in a sandboxed iframe. Firefox refuses a
+      // cross-origin module worker, so create the worker from a local Blob.
+      // Its two module imports must be made absolute because a Blob has no
+      // directory from which to resolve relative imports.
+      const workerSource = await fetch(`${packageBase}/worker.js`).then(async response => {
+        if (!response.ok) throw new Error("Impossible de charger le worker FFmpeg.");
+        return response.text();
+      });
+      const localWorkerURL = URL.createObjectURL(new Blob([
+        workerSource
+          .replaceAll('"./const.js"', `"${packageBase}/const.js"`)
+          .replaceAll('"./errors.js"', `"${packageBase}/errors.js"`),
+      ], { type: "text/javascript" }));
+      const ffmpeg = new FFmpeg();
+      ffmpeg.on("progress", ({ progress: value }) => {
+        progress.value = Math.round(value * 100);
+        show(`Conversion locale en cours… ${progress.value} %`);
+      });
+      await ffmpeg.load({
+        classWorkerURL: localWorkerURL,
+        coreURL: await toBlobURL(`${base}/ffmpeg-core.js`, "text/javascript"),
+        wasmURL: await toBlobURL(`${base}/ffmpeg-core.wasm`, "application/wasm"),
+      });
+      return ffmpeg;
+    }
+    input.addEventListener("change", async () => {
+      const file = input.files[0];
+      if (!file) return;
+      input.disabled = true;
+      progress.style.display = "block";
+      progress.value = 0;
+      try {
+        show("Chargement du convertisseur local…");
+        const ffmpeg = await loadFFmpeg();
+        const extension = file.name.includes(".") ? file.name.split(".").pop() : "video";
+        const source = `source.${extension}`;
+        const output = "meeting-audio.mp3";
+        show("Préparation de la vidéo dans le navigateur…");
+        await ffmpeg.writeFile(source, new Uint8Array(await file.arrayBuffer()));
+        await ffmpeg.exec(["-i", source, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "libmp3lame", "-b:a", "48k", output]);
+        const audio = await ffmpeg.readFile(output);
+        const bytes = audio instanceof Uint8Array ? audio : new TextEncoder().encode(audio);
+        show(`Audio prêt (${(bytes.length / 1024 / 1024).toFixed(1)} Mo). Envoi de l’audio…`);
+        send("streamlit:setComponentValue", {
+          value: {
+            name: file.name.replace(/\.[^.]+$/, "") + ".mp3",
+            mime: "audio/mpeg",
+            data: bytesToBase64(bytes),
+          },
+        });
+        show("Audio envoyé. Vous pouvez lancer la transcription.");
+      } catch (error) {
+        console.error(error);
+        show(`Conversion impossible : ${error.message || error}`, true);
+      } finally {
+        input.disabled = false;
+        progress.style.display = "none";
+      }
+    });
+    window.addEventListener("message", (event) => {
+      if (event.data?.type === "streamlit:render") setHeight();
+    });
+    send("streamlit:componentReady", { apiVersion: 1 });
+    setHeight();
+  </script>
+</body>
+</html>
