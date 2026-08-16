@@ -66,7 +66,8 @@ Dans l'interface :
 Le pipeline produit un WAV mono 16 kHz et un MP3 dans `work/<uuid>/`, puis :
 
 1. transcrit l'audio avec `nvidia/parakeet-tdt-0.6b-v3` ;
-2. découpe l'audio en segments de 20 secondes pour limiter la mémoire vidéo ;
+2. découpe l'audio en segments d'au plus 20 secondes pour limiter la mémoire
+   vidéo, en privilégiant un silence proche de la limite ;
 3. réalise la diarisation avec pyannote ;
 4. aligne les segments de transcription avec le locuteur ayant le plus grand
    recouvrement temporel ;

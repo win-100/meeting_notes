@@ -21,6 +21,36 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 st.set_page_config(page_title="Meeting Minutes")
 st.title("Transcription locale de réunions")
 
+
+def format_timestamp(seconds):
+    """Return an elapsed timestamp suitable for a meeting transcript."""
+    seconds = max(0, int(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def transcript_with_diarization(segments, speaker_names):
+    """Build the portable, human-readable diarized transcript."""
+    lines = []
+    for segment in segments:
+        speaker = speaker_names.get(segment.speaker_id) or segment.speaker_id or "Inconnu"
+        lines.append(f"[{format_timestamp(segment.start)}] {speaker}: {segment.text}")
+    return "\n".join(lines)
+
+
+def speaker_ids(segments):
+    """Keep speaker choices in a predictable order."""
+    return sorted(
+        {segment.speaker_id for segment in segments if segment.speaker_id},
+        key=lambda value: (
+            not value.removeprefix("SPEAKER_").isdigit(),
+            int(value.removeprefix("SPEAKER_"))
+            if value.removeprefix("SPEAKER_").isdigit()
+            else value,
+        ),
+    )
+
 cuda = False
 try:
     import torch
@@ -71,32 +101,72 @@ if upload and st.button("Préparer, transcrire et diariser"):
         aligned_segments = align_transcription_with_speakers(raw, dia)
         st.session_state["segments"] = merge_consecutive(aligned_segments)
         st.session_state["work"] = work
+        st.session_state["speaker_names"] = {}
     except Exception as error:
         st.error(str(error))
 
 if "segments" in st.session_state:
-    names = ["Inconnu"] + [participant for participant in participants if participant]
+    segments = st.session_state["segments"]
+    available_names = ["Inconnu"] + [participant.strip() for participant in participants if participant.strip()]
+    mappings = st.session_state.setdefault("speaker_names", {})
 
-    for index, segment in enumerate(st.session_state.segments):
-        segment.speaker_name = st.selectbox(
-            f"{segment.speaker_id} — {segment.text[:80]}",
-            names,
-            key=index,
+    st.subheader("Interlocuteurs")
+    st.caption("Associez chaque identifiant de diarisation une seule fois. Ces choix restent modifiables.")
+    mapping_columns = st.columns(min(3, max(1, len(speaker_ids(segments)))))
+    for index, speaker_id in enumerate(speaker_ids(segments)):
+        choices = available_names.copy()
+        current_name = mappings.get(speaker_id, "Inconnu")
+        if current_name not in choices:
+            choices.append(current_name)
+        mappings[speaker_id] = mapping_columns[index % len(mapping_columns)].selectbox(
+            speaker_id,
+            choices,
+            index=choices.index(current_name),
+            key=f"speaker_mapping_{speaker_id}",
         )
 
-    prompt = st.text_area(
-        "Prompt du compte-rendu",
-        Path("prompts/default_minutes.txt").read_text(),
+    for segment in segments:
+        segment.speaker_name = mappings.get(segment.speaker_id, "Inconnu")
+
+    transcript = transcript_with_diarization(segments, mappings)
+    panel_open = st.toggle("Afficher le transcript diarisé", value=True)
+
+    main_column, transcript_column = (
+        st.columns([3, 2], gap="large") if panel_open else (st.container(), None)
     )
 
-    if models and st.button("Générer le compte-rendu"):
-        model = st.selectbox("Modèle Ollama", models)
-        transcript = "\n".join(
-            f"[{segment.speaker_name}] {segment.text}"
-            for segment in st.session_state.segments
+    with main_column:
+        st.download_button(
+            "Télécharger le transcript diarisé (.txt)",
+            data=transcript,
+            file_name="transcript-diarise.txt",
+            mime="text/plain",
         )
-        response = Ollama(OLLAMA_BASE_URL).generate(
-            model,
-            f"{prompt}\n\nVoici la transcription diarizée :\n{transcript}",
+
+        prompt = st.text_area(
+            "Prompt du compte-rendu",
+            Path("prompts/default_minutes.txt").read_text(),
         )
-        st.markdown(response)
+
+        if models:
+            model = st.selectbox("Modèle Ollama", models)
+            if st.button("Générer le compte-rendu"):
+                response = Ollama(OLLAMA_BASE_URL).generate(
+                    model,
+                    f"{prompt}\n\nVoici la transcription diarizée :\n{transcript}",
+                )
+                st.markdown(response)
+
+    if transcript_column is not None:
+        with transcript_column:
+            st.subheader("Transcript diarisé")
+            st.caption("Les heures sont affichées au début de chaque prise de parole.")
+            last_speaker = object()
+            for segment in segments:
+                speaker = mappings.get(segment.speaker_id) or segment.speaker_id or "Inconnu"
+                if segment.speaker_id != last_speaker:
+                    st.markdown(
+                        f"**{speaker}** · {format_timestamp(segment.start)}"
+                    )
+                    last_speaker = segment.speaker_id
+                st.chat_message("assistant", avatar="💬").write(segment.text)
