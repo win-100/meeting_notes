@@ -1,5 +1,6 @@
 import os
 import uuid
+from html import escape
 from pathlib import Path
 
 import streamlit as st
@@ -50,6 +51,19 @@ def speaker_ids(segments):
             else value,
         ),
     )
+
+
+def speaker_color(speaker, speakers):
+    """Give each displayed speaker a stable, readable conversation color."""
+    palette = [
+        ("#DCEEFF", "#164A7A"),
+        ("#E5F6E9", "#1D5A30"),
+        ("#FCE8D5", "#7A3E12"),
+        ("#F0E5FF", "#56307A"),
+        ("#FBE1EC", "#7A2146"),
+        ("#E1F4F4", "#15575A"),
+    ]
+    return palette[speakers.index(speaker) % len(palette)]
 
 cuda = False
 try:
@@ -129,44 +143,53 @@ if "segments" in st.session_state:
         segment.speaker_name = mappings.get(segment.speaker_id, "Inconnu")
 
     transcript = transcript_with_diarization(segments, mappings)
-    panel_open = st.toggle("Afficher le transcript diarisé", value=True)
-
-    main_column, transcript_column = (
-        st.columns([3, 2], gap="large") if panel_open else (st.container(), None)
+    st.download_button(
+        "Télécharger le transcript diarisé (.txt)",
+        data=transcript,
+        file_name="transcript-diarise.txt",
+        mime="text/plain",
     )
 
-    with main_column:
-        st.download_button(
-            "Télécharger le transcript diarisé (.txt)",
-            data=transcript,
-            file_name="transcript-diarise.txt",
-            mime="text/plain",
+    with st.expander("Transcript diarisé", expanded=True):
+        st.caption("Les heures sont affichées au début de chaque prise de parole.")
+        displayed_speakers = list(
+            dict.fromkeys(
+                mappings.get(segment.speaker_id) or segment.speaker_id or "Inconnu"
+                for segment in segments
+            )
         )
-
-        prompt = st.text_area(
-            "Prompt du compte-rendu",
-            Path("prompts/default_minutes.txt").read_text(),
-        )
-
-        if models:
-            model = st.selectbox("Modèle Ollama", models)
-            if st.button("Générer le compte-rendu"):
-                response = Ollama(OLLAMA_BASE_URL).generate(
-                    model,
-                    f"{prompt}\n\nVoici la transcription diarizée :\n{transcript}",
+        last_speaker = object()
+        dialogue_html = []
+        for segment in segments:
+            speaker = mappings.get(segment.speaker_id) or segment.speaker_id or "Inconnu"
+            background, text_color = speaker_color(speaker, displayed_speakers)
+            header = ""
+            if segment.speaker_id != last_speaker:
+                header = (
+                    '<div style="margin: 9px 0 1px; font-size: 0.85rem; '
+                    f'font-weight: 600; color: {text_color};">'
+                    f"{escape(speaker)} · {format_timestamp(segment.start)}</div>"
                 )
-                st.markdown(response)
+                last_speaker = segment.speaker_id
+            dialogue_html.append(
+                f"{header}"
+                '<div style="margin: 0 0 2px; padding: 5px 9px; '
+                f'border-radius: 6px; line-height: 1.35; background-color: {background}; '
+                f'color: {text_color};">'
+                f"{escape(segment.text)}</div>",
+            )
+        st.markdown("".join(dialogue_html), unsafe_allow_html=True)
 
-    if transcript_column is not None:
-        with transcript_column:
-            st.subheader("Transcript diarisé")
-            st.caption("Les heures sont affichées au début de chaque prise de parole.")
-            last_speaker = object()
-            for segment in segments:
-                speaker = mappings.get(segment.speaker_id) or segment.speaker_id or "Inconnu"
-                if segment.speaker_id != last_speaker:
-                    st.markdown(
-                        f"**{speaker}** · {format_timestamp(segment.start)}"
-                    )
-                    last_speaker = segment.speaker_id
-                st.chat_message("assistant", avatar="💬").write(segment.text)
+    prompt = st.text_area(
+        "Prompt du compte-rendu",
+        Path("prompts/default_minutes.txt").read_text(),
+    )
+
+    if models:
+        model = st.selectbox("Modèle Ollama", models)
+        if st.button("Générer le compte-rendu"):
+            response = Ollama(OLLAMA_BASE_URL).generate(
+                model,
+                f"{prompt}\n\nVoici la transcription diarizée :\n{transcript}",
+            )
+            st.markdown(response)
