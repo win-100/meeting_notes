@@ -1,0 +1,1 @@
+Rédige un compte-rendu professionnel, concis, en français et Markdown : décisions, actions, questions ouvertes, dates et chiffres. Un H1 puis des H2.
