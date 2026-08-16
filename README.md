@@ -12,7 +12,7 @@ modèle de diarisation `pyannote/speaker-diarization-community-1`.
 - Python 3.10 ou plus récent ;
 - [FFmpeg](https://ffmpeg.org/) installé et disponible dans le `PATH` ;
 - Ollama lancé localement (par défaut sur `http://localhost:11434`) ;
-- un modèle Ollama installé, par exemple `ollama pull qwen2.5:3b` ;
+- le modèle Ollama `qwen3.5:4b-q4_K_M` installé ;
 - un compte Hugging Face avec accès accepté au modèle de diarisation pyannote ;
 - facultatif mais recommandé : un GPU NVIDIA compatible CUDA.
 
@@ -41,6 +41,8 @@ Renseignez au minimum le token Hugging Face :
 ```dotenv
 HF_TOKEN=hf_votre_token
 OLLAMA_BASE_URL=http://localhost:11434
+# Facultatif : adaptez ce tag s'il diffère dans votre installation Ollama.
+OLLAMA_MINUTES_MODEL=qwen3.5:4b-q4_K_M
 ```
 
 Le fichier `.env` est ignoré par Git : ne le versionnez pas.
@@ -61,7 +63,7 @@ Dans l'interface :
 3. lancez la préparation, la transcription et la diarisation ;
 4. associez les identifiants de locuteurs aux participants ;
 5. téléchargez le transcript texte ou les sous-titres `.srt` (compatibles VLC) ;
-6. choisissez un modèle Ollama et générez le compte-rendu.
+6. générez le compte-rendu avec Qwen3.5 4B Q4_K_M ; le reasoning est désactivé.
 
 Pour afficher le fichier téléchargé dans VLC, ouvrez la vidéo puis sélectionnez
 **Sous-titres > Ajouter un fichier de sous-titres** et choisissez le `.srt`.
@@ -85,16 +87,31 @@ maxMessageSize = 200
 
 Le pipeline produit un WAV mono 16 kHz et un MP3 dans `work/<uuid>/`, puis :
 
-1. transcrit l'audio avec `nvidia/parakeet-tdt-0.6b-v3` ;
+1. transcrit l'audio avec le moteur sélectionné (Whisper Turbo ou
+   `nvidia/parakeet-tdt-0.6b-v3`) ;
 2. découpe l'audio en segments d'au plus 20 secondes pour limiter la mémoire
    vidéo, en privilégiant un silence proche de la limite ;
 3. réalise la diarisation avec pyannote ;
 4. aligne les segments de transcription avec le locuteur ayant le plus grand
    recouvrement temporel ;
-5. envoie la transcription annotée au modèle Ollama sélectionné.
+5. envoie la transcription annotée à Qwen3.5 4B Q4_K_M via Ollama, avec le
+   reasoning désactivé.
 
 Les modèles sont libérés entre les étapes lourdes afin de mieux fonctionner sur
 des cartes disposant de peu de VRAM.
+
+### Moteur et langue de transcription
+
+Deux moteurs locaux sont disponibles :
+
+- **Whisper Turbo** (par défaut) : choisissez explicitement la langue de la
+  réunion. Pour une réunion française, conservez **Français** ; cela évite une
+  détection erronée en anglais.
+- **Parakeet TDT v3** : conserve son comportement historique et détecte
+  automatiquement la langue.
+
+Whisper Turbo est téléchargé automatiquement au premier lancement. Il utilise
+`faster-whisper` en INT8, afin de rester compatible avec les GPU à 6 Go de VRAM.
 
 ## Structure du projet
 

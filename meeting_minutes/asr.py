@@ -6,7 +6,7 @@ from pathlib import Path
 
 import torch
 
-from .models import TranscriptSegment
+from .models import TranscriptSegment, Word
 
 
 CHUNK_SECONDS = 40
@@ -14,6 +14,18 @@ MIN_CHUNK_SECONDS = 10
 SILENCE_SEARCH_SECONDS = 10
 SILENCE_DURATION_SECONDS = 0.35
 SILENCE_THRESHOLD_DB = -35
+
+ASR_ENGINES = {
+    "Whisper Turbo (recommandé)": "whisper_turbo",
+    "Parakeet TDT v3": "parakeet",
+}
+TRANSCRIPTION_LANGUAGES = {
+    "Détection automatique": None,
+    "Français": "fr",
+    "Anglais": "en",
+    "Espagnol": "es",
+    "Allemand": "de",
+}
 
 
 def _audio_duration(path):
@@ -97,7 +109,7 @@ def _split_on_silence(audio_path, chunk_directory):
     return chunks
 
 
-def transcribe(path):
+def _transcribe_parakeet(path):
     """Transcribe an audio file locally with Parakeet TDT.
 
     The input is split into at-most-20-second WAV chunks to stay within 6 GB of
@@ -165,3 +177,64 @@ def transcribe(path):
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+
+def _transcribe_whisper_turbo(path, language):
+    """Transcribe locally with Whisper Turbo, optionally forcing a language."""
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError as error:
+        raise RuntimeError(
+            "Whisper Turbo n'est pas installé. Exécutez « pip install -r requirements.txt »."
+        ) from error
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    compute_type = "int8_float16" if device == "cuda" else "int8"
+    model = None
+
+    try:
+        if device == "cuda":
+            torch.cuda.empty_cache()
+
+        model = WhisperModel(
+            "large-v3-turbo", device=device, compute_type=compute_type
+        )
+        whisper_segments, _ = model.transcribe(
+            str(path),
+            language=language,
+            task="transcribe",
+            beam_size=5,
+            word_timestamps=True,
+        )
+        return [
+            TranscriptSegment(
+                start=segment.start,
+                end=segment.end,
+                text=segment.text.strip(),
+                words=[
+                    Word(word.start, word.end, word.word.strip())
+                    for word in (segment.words or [])
+                    if word.word.strip()
+                ],
+            )
+            for segment in whisper_segments
+            if segment.text.strip()
+        ]
+    finally:
+        del model
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
+def transcribe(path, engine="whisper_turbo", language="fr"):
+    """Transcribe a local audio file with the selected ASR engine.
+
+    Whisper Turbo accepts a language hint; Parakeet TDT v3 detects languages
+    automatically and therefore ignores it.
+    """
+    if engine == "whisper_turbo":
+        return _transcribe_whisper_turbo(path, language)
+    if engine == "parakeet":
+        return _transcribe_parakeet(path)
+    raise ValueError(f"Moteur de transcription inconnu : {engine}")

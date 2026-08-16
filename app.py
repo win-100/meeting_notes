@@ -11,7 +11,7 @@ from meeting_minutes.alignment import (
     align_transcription_with_speakers,
     merge_consecutive,
 )
-from meeting_minutes.asr import transcribe
+from meeting_minutes.asr import ASR_ENGINES, TRANSCRIPTION_LANGUAGES, transcribe
 from meeting_minutes.audio import prepare_audio
 from meeting_minutes.browser_audio_uploader import video_audio_uploader
 from meeting_minutes.diarization import diarize
@@ -21,6 +21,7 @@ from meeting_minutes.subtitles import transcript_as_srt
 
 load_dotenv()
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+MINUTES_MODEL = os.getenv("OLLAMA_MINUTES_MODEL", "qwen3.5:4b-q4_K_M")
 
 st.set_page_config(page_title="Meeting Minutes")
 st.title("Transcription locale de réunions")
@@ -100,6 +101,25 @@ if video_audio and not upload:
         st.error(f"Audio extrait par le navigateur invalide : {error}")
         upload = None
 participants = st.text_area("Participants (un par ligne)").splitlines()
+asr_engine_label = st.selectbox(
+    "Moteur de transcription",
+    options=list(ASR_ENGINES),
+    help="Whisper Turbo permet de fixer la langue ; Parakeet la détecte automatiquement.",
+)
+asr_engine = ASR_ENGINES[asr_engine_label]
+language_label = st.selectbox(
+    "Langue de transcription",
+    options=list(TRANSCRIPTION_LANGUAGES),
+    index=1,
+    disabled=asr_engine == "parakeet",
+    help=(
+        "Pour une réunion essentiellement en français, choisissez Français. "
+        "Utilisez la détection automatique seulement si les langues sont réellement mélangées."
+    ),
+)
+language = TRANSCRIPTION_LANGUAGES[language_label]
+if asr_engine == "parakeet":
+    st.caption("Parakeet TDT v3 détecte automatiquement la langue ; ce réglage ne lui est pas transmis.")
 expected = st.checkbox(
     "Utiliser ce nombre comme nombre de locuteurs attendu",
     value=bool(participants),
@@ -118,7 +138,7 @@ if upload and st.button("Préparer, transcrire et diariser"):
 
         Ollama(OLLAMA_BASE_URL).unload_all()
 
-        raw = transcribe(wav)
+        raw = transcribe(wav, engine=asr_engine, language=language)
         st.success("✓ Transcription terminée")
 
         dia = diarize(wav, len(participants) if expected else None)
@@ -204,11 +224,17 @@ if "segments" in st.session_state:
         Path("prompts/default_minutes.txt").read_text(),
     )
 
-    if models:
-        model = st.selectbox("Modèle Ollama", models)
+    if MINUTES_MODEL in models:
+        st.caption(f"Modèle du compte-rendu : `{MINUTES_MODEL}` — reasoning désactivé.")
         if st.button("Générer le compte-rendu"):
             response = Ollama(OLLAMA_BASE_URL).generate(
-                model,
+                MINUTES_MODEL,
                 f"{prompt}\n\nVoici la transcription diarizée :\n{transcript}",
+                think=False,
             )
             st.markdown(response)
+    elif models:
+        st.error(
+            f"Le modèle requis `{MINUTES_MODEL}` n'est pas installé dans Ollama. "
+            "Installez-le ou définissez OLLAMA_MINUTES_MODEL avec son tag local exact."
+        )

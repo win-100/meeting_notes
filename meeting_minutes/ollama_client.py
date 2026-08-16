@@ -12,11 +12,16 @@ class Ollama:
         response = requests.get(f"{self.url}/api/tags", timeout=3)
         return [model["name"] for model in response.json().get("models", [])]
 
-    def generate(self, model, prompt):
-        """Generate meeting minutes with ``model`` from ``prompt``."""
+    def generate(self, model, prompt, *, think=False):
+        """Generate meeting minutes with ``model``, optionally disabling reasoning."""
         response = requests.post(
             f"{self.url}/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False},
+            json={
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "think": think,
+            },
             timeout=1800,
         )
         response.raise_for_status()
