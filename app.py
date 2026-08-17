@@ -1,8 +1,11 @@
 import os
 import uuid
 import base64
+import json
+from io import BytesIO
 from html import escape
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -16,6 +19,7 @@ from meeting_minutes.audio import prepare_audio
 from meeting_minutes.browser_audio_uploader import video_audio_uploader
 from meeting_minutes.diarization import diarize
 from meeting_minutes.ollama_client import Ollama
+from meeting_minutes.models import dump
 from meeting_minutes.subtitles import transcript_as_srt
 
 
@@ -42,6 +46,107 @@ def transcript_with_diarization(segments, speaker_names):
         speaker = speaker_names.get(segment.speaker_id) or segment.speaker_id or "Inconnu"
         lines.append(f"[{format_timestamp(segment.start)}] {speaker}: {segment.text}")
     return "\n".join(lines)
+
+
+def raw_transcript_as_text(segments):
+    """Build a timestamped transcript before speaker attribution."""
+    return "\n".join(
+        f"[{format_timestamp(segment.start)}] {segment.text}" for segment in segments
+    )
+
+
+def transcript_as_markdown(segments, speaker_names):
+    """Build the readable Markdown version of the final transcript."""
+    lines = ["# Transcription", ""]
+    for segment in segments:
+        speaker = speaker_names.get(segment.speaker_id) or segment.speaker_id or "Inconnu"
+        lines.extend(
+            [
+                f"**[{format_timestamp(segment.start)}] {speaker}**",
+                "",
+                segment.text,
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def write_text_artifact(work, filename, content):
+    """Persist an artifact so it remains available throughout the workflow."""
+    path = Path(work) / filename
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def write_json_artifact(work, filename, content):
+    """Persist a JSON artifact with readable Unicode text."""
+    return write_text_artifact(
+        work, filename, json.dumps(content, ensure_ascii=False, indent=2) + "\n"
+    )
+
+
+def artifact_mime_type(path):
+    return {
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+        ".m4a": "audio/mp4",
+        ".json": "application/json",
+        ".md": "text/markdown",
+        ".srt": "application/x-subrip",
+    }.get(path.suffix, "text/plain")
+
+
+def render_artifact_downloads(work):
+    """Display one download button per generated artifact and a ZIP archive."""
+    work = Path(work)
+    artifact_names = [
+        "audio.wav",
+        "audio.mp3",
+        "transcript_raw.txt",
+        "transcript_raw.json",
+        "diarization.json",
+        "transcript.txt",
+        "transcript.md",
+        "transcript.json",
+        "transcript-diarise.srt",
+        "minutes.md",
+    ]
+    artifacts = [
+        (work / name, name, name)
+        for name in artifact_names
+        if (work / name).is_file()
+    ]
+    source = st.session_state.get("source")
+    if source and Path(source).is_file():
+        source = Path(source)
+        archive_name = source.name if source.name not in artifact_names else f"original_{source.name}"
+        artifacts.insert(0, (source, archive_name, f"fichier source ({source.name})"))
+
+    if not artifacts:
+        return
+
+    st.subheader("Téléchargements")
+    columns = st.columns(2)
+    for index, (path, _, label) in enumerate(artifacts):
+        columns[index % len(columns)].download_button(
+            f"Télécharger {label}",
+            data=path.read_bytes(),
+            file_name=path.name,
+            mime=artifact_mime_type(path),
+            key=f"download_{work.name}_{index}",
+        )
+
+    archive = BytesIO()
+    with ZipFile(archive, "w", ZIP_DEFLATED) as zip_file:
+        for path, archive_name, _ in artifacts:
+            zip_file.writestr(archive_name, path.read_bytes())
+    st.download_button(
+        "Télécharger tous les fichiers (.zip)",
+        data=archive.getvalue(),
+        file_name="fichiers-reunion.zip",
+        mime="application/zip",
+        key=f"download_zip_{work.name}",
+    )
 
 
 def speaker_ids(segments):
@@ -129,8 +234,12 @@ if upload and st.button("Préparer, transcrire et diariser"):
     work = Path("work") / str(uuid.uuid4())
     work.mkdir(parents=True)
 
-    source = work / (upload["name"] if isinstance(upload, dict) else upload.name)
+    source = work / Path(upload["name"] if isinstance(upload, dict) else upload.name).name
     source.write_bytes(upload["data"] if isinstance(upload, dict) else upload.getbuffer())
+    st.session_state["work"] = work
+    st.session_state["source"] = source
+    st.session_state.pop("segments", None)
+    st.session_state.pop("minutes", None)
 
     try:
         wav, mp3 = prepare_audio(source, work)
@@ -139,17 +248,22 @@ if upload and st.button("Préparer, transcrire et diariser"):
         Ollama(OLLAMA_BASE_URL).unload_all()
 
         raw = transcribe(wav, engine=asr_engine, language=language)
+        write_text_artifact(work, "transcript_raw.txt", raw_transcript_as_text(raw))
+        write_json_artifact(work, "transcript_raw.json", dump(raw))
         st.success("✓ Transcription terminée")
 
         dia = diarize(wav, len(participants) if expected else None)
+        write_json_artifact(work, "diarization.json", dump(dia))
         st.success("✓ Diarisation terminée")
 
         aligned_segments = align_transcription_with_speakers(raw, dia)
         st.session_state["segments"] = merge_consecutive(aligned_segments)
-        st.session_state["work"] = work
         st.session_state["speaker_names"] = {}
     except Exception as error:
         st.error(str(error))
+
+if "work" in st.session_state and "segments" not in st.session_state:
+    render_artifact_downloads(st.session_state["work"])
 
 if "segments" in st.session_state:
     segments = st.session_state["segments"]
@@ -175,19 +289,11 @@ if "segments" in st.session_state:
         segment.speaker_name = mappings.get(segment.speaker_id, "Inconnu")
 
     transcript = transcript_with_diarization(segments, mappings)
-    st.download_button(
-        "Télécharger le transcript diarisé (.txt)",
-        data=transcript,
-        file_name="transcript-diarise.txt",
-        mime="text/plain",
-    )
-    st.download_button(
-        "Télécharger les sous-titres VLC (.srt)",
-        data=transcript_as_srt(segments, mappings),
-        file_name="transcript-diarise.srt",
-        mime="application/x-subrip",
-        help="Dans VLC : Sous-titres > Ajouter un fichier de sous-titres.",
-    )
+    work = st.session_state["work"]
+    write_text_artifact(work, "transcript.txt", transcript)
+    write_text_artifact(work, "transcript.md", transcript_as_markdown(segments, mappings))
+    write_json_artifact(work, "transcript.json", dump(segments))
+    write_text_artifact(work, "transcript-diarise.srt", transcript_as_srt(segments, mappings))
 
     with st.expander("Transcript diarisé", expanded=True):
         st.caption("Les heures sont affichées au début de chaque prise de parole.")
@@ -232,9 +338,16 @@ if "segments" in st.session_state:
                 f"{prompt}\n\nVoici la transcription diarizée :\n{transcript}",
                 think=False,
             )
-            st.markdown(response)
+            write_text_artifact(work, "minutes.md", response)
+            st.session_state["minutes"] = response
     elif models:
         st.error(
             f"Le modèle requis `{MINUTES_MODEL}` n'est pas installé dans Ollama. "
             "Installez-le ou définissez OLLAMA_MINUTES_MODEL avec son tag local exact."
         )
+
+    if "minutes" in st.session_state:
+        st.markdown(st.session_state["minutes"])
+
+    render_artifact_downloads(work)
+    st.caption("Les sous-titres .srt sont compatibles VLC : Sous-titres > Ajouter un fichier de sous-titres.")

@@ -62,8 +62,10 @@ Dans l'interface :
 2. indiquez les participants si vous les connaissez ;
 3. lancez la préparation, la transcription et la diarisation ;
 4. associez les identifiants de locuteurs aux participants ;
-5. téléchargez le transcript texte ou les sous-titres `.srt` (compatibles VLC) ;
-6. générez le compte-rendu avec Qwen3.5 4B Q4_K_M ; le reasoning est désactivé.
+5. téléchargez chaque fichier produit (audio préparé, résultats intermédiaires,
+   transcription finale et sous-titres) ou leur archive `.zip` ;
+6. générez le compte-rendu avec Qwen3.5 4B Q4_K_M ; le reasoning est désactivé,
+   puis téléchargez-le sous `minutes.md`.
 
 Pour afficher le fichier téléchargé dans VLC, ouvrez la vidéo puis sélectionnez
 **Sous-titres > Ajouter un fichier de sous-titres** et choisissez le `.srt`.
@@ -99,6 +101,15 @@ Le pipeline produit un WAV mono 16 kHz et un MP3 dans `work/<uuid>/`, puis :
 
 Les modèles sont libérés entre les étapes lourdes afin de mieux fonctionner sur
 des cartes disposant de peu de VRAM.
+
+### Fichiers téléchargeables
+
+La section **Téléchargements** présente un bouton par fichier disponible : le
+fichier importé, `audio.wav`, `audio.mp3`, la transcription brute (`.txt` et
+`.json`), `diarization.json`, la transcription finale (`.txt`, `.md`, `.json`),
+les sous-titres `.srt` et, après génération, `minutes.md`. Le bouton ZIP
+contient tous les fichiers déjà produits, y compris lorsqu'une étape suivante
+n'a pas été réalisée ou a échoué.
 
 ### Moteur et langue de transcription
 
