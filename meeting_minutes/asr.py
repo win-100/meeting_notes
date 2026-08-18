@@ -1,6 +1,7 @@
 import gc
 import re
 import subprocess
+import tempfile
 import wave
 from pathlib import Path
 
@@ -109,12 +110,8 @@ def _split_on_silence(audio_path, chunk_directory):
     return chunks
 
 
-def _transcribe_parakeet(path):
-    """Transcribe an audio file locally with Parakeet TDT.
-
-    The input is split into at-most-20-second WAV chunks to stay within 6 GB of
-    VRAM. When possible, a nearby silence is used as the boundary.
-    """
+def _transcribe_parakeet(chunks):
+    """Transcribe pre-cut WAV chunks locally with Parakeet TDT."""
     from nemo.collections.asr.models import ASRModel
     from omegaconf import open_dict
 
@@ -136,16 +133,8 @@ def _transcribe_parakeet(path):
         model.change_decoding_strategy(model.cfg.decoding, verbose=False)
         model = model.to(device)
 
-        audio_path = Path(path)
-        chunk_directory = audio_path.parent / "asr_chunks"
-        chunk_directory.mkdir(exist_ok=True)
-
-        chunks_with_offsets = _split_on_silence(audio_path, chunk_directory)
-
         segments = []
-        chunks = sorted(chunk_directory.glob("chunk_*.wav"))
-
-        for chunk_path, (offset, end) in zip(chunks, chunks_with_offsets):
+        for chunk_path, offset, end in chunks:
             with torch.inference_mode():
                 result = model.transcribe([str(chunk_path)], timestamps=True)[0]
 
@@ -179,8 +168,8 @@ def _transcribe_parakeet(path):
             torch.cuda.empty_cache()
 
 
-def _transcribe_whisper_turbo(path, language):
-    """Transcribe locally with Whisper Turbo, optionally forcing a language."""
+def _transcribe_whisper_turbo(chunks, language):
+    """Transcribe pre-cut WAV chunks with Whisper Turbo."""
     try:
         from faster_whisper import WhisperModel
     except ImportError as error:
@@ -199,35 +188,42 @@ def _transcribe_whisper_turbo(path, language):
         model = WhisperModel(
             "large-v3-turbo", device=device, compute_type=compute_type
         )
-        whisper_segments, _ = model.transcribe(
-            str(path),
-            language=language,
-            task="transcribe",
-            beam_size=5,
-            word_timestamps=True,
-            # Whisper can decode a long trailing silence as text seen frequently
-            # in subtitle training data (for example "Sous-titrage FR").  Let
-            # Silero VAD discard non-speech before decoding it.  Keeping windows
-            # independent also prevents such a hallucination being propagated to
-            # the next window.
-            vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": 1000},
-            condition_on_previous_text=False,
-        )
-        return [
-            TranscriptSegment(
-                start=segment.start,
-                end=segment.end,
-                text=segment.text.strip(),
-                words=[
-                    Word(word.start, word.end, word.word.strip())
-                    for word in (segment.words or [])
-                    if word.word.strip()
-                ],
+        segments = []
+        for chunk_path, offset, _ in chunks:
+            whisper_segments, _ = model.transcribe(
+                str(chunk_path),
+                language=language,
+                task="transcribe",
+                beam_size=5,
+                word_timestamps=True,
+                # Whisper can decode a long trailing silence as text seen frequently
+                # in subtitle training data (for example "Sous-titrage FR").  Let
+                # Silero VAD discard non-speech before decoding it.  Keeping windows
+                # independent also prevents such a hallucination being propagated to
+                # the next window.
+                vad_filter=True,
+                vad_parameters={"min_silence_duration_ms": 1000},
+                condition_on_previous_text=False,
             )
-            for segment in whisper_segments
-            if segment.text.strip()
-        ]
+            segments.extend(
+                TranscriptSegment(
+                    start=offset + segment.start,
+                    end=offset + segment.end,
+                    text=segment.text.strip(),
+                    words=[
+                        Word(
+                            offset + word.start,
+                            offset + word.end,
+                            word.word.strip(),
+                        )
+                        for word in (segment.words or [])
+                        if word.word.strip()
+                    ],
+                )
+                for segment in whisper_segments
+                if segment.text.strip()
+            )
+        return segments
     finally:
         del model
         gc.collect()
@@ -238,11 +234,22 @@ def _transcribe_whisper_turbo(path, language):
 def transcribe(path, engine="whisper_turbo", language="fr"):
     """Transcribe a local audio file with the selected ASR engine.
 
-    Whisper Turbo accepts a language hint; Parakeet TDT v3 detects languages
-    automatically and therefore ignores it.
+    All engines receive the same at-most-40-second WAV chunks, with boundaries
+    moved to nearby silences when possible. Whisper Turbo accepts a language
+    hint; Parakeet TDT v3 detects languages automatically and ignores it.
     """
-    if engine == "whisper_turbo":
-        return _transcribe_whisper_turbo(path, language)
-    if engine == "parakeet":
-        return _transcribe_parakeet(path)
-    raise ValueError(f"Moteur de transcription inconnu : {engine}")
+    if engine not in {"whisper_turbo", "parakeet"}:
+        raise ValueError(f"Moteur de transcription inconnu : {engine}")
+
+    with tempfile.TemporaryDirectory(prefix="meeting_notes_asr_") as directory:
+        chunk_directory = Path(directory)
+        boundaries = _split_on_silence(Path(path), chunk_directory)
+        chunks = [
+            (chunk_directory / f"chunk_{index:05d}.wav", start, end)
+            for index, (start, end) in enumerate(boundaries)
+        ]
+
+        if engine == "whisper_turbo":
+            return _transcribe_whisper_turbo(chunks, language)
+        if engine == "parakeet":
+            return _transcribe_parakeet(chunks)
