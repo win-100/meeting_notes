@@ -41,3 +41,30 @@ def test_transcribe_dispatches_to_parakeet_without_language(monkeypatch):
 def test_transcribe_rejects_unknown_engine():
     with pytest.raises(ValueError, match="inconnu"):
         asr.transcribe("audio.wav", engine="invalide")
+
+
+def test_whisper_ignores_silence_and_does_not_condition_windows(monkeypatch):
+    captured = {}
+
+    class FakeSegment:
+        start = 0
+        end = 1
+        text = " Bonjour "
+        words = []
+
+    class FakeModel:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def transcribe(self, path, **kwargs):
+            captured.update(kwargs)
+            return iter([FakeSegment()]), None
+
+    monkeypatch.setattr("faster_whisper.WhisperModel", FakeModel)
+
+    result = asr._transcribe_whisper_turbo("audio.wav", "fr")
+
+    assert result[0].text == "Bonjour"
+    assert captured["vad_filter"] is True
+    assert captured["vad_parameters"] == {"min_silence_duration_ms": 1000}
+    assert captured["condition_on_previous_text"] is False

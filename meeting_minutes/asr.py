@@ -205,6 +205,14 @@ def _transcribe_whisper_turbo(path, language):
             task="transcribe",
             beam_size=5,
             word_timestamps=True,
+            # Whisper can decode a long trailing silence as text seen frequently
+            # in subtitle training data (for example "Sous-titrage FR").  Let
+            # Silero VAD discard non-speech before decoding it.  Keeping windows
+            # independent also prevents such a hallucination being propagated to
+            # the next window.
+            vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": 1000},
+            condition_on_previous_text=False,
         )
         return [
             TranscriptSegment(

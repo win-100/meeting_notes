@@ -123,6 +123,8 @@ Deux moteurs locaux sont disponibles :
 
 Whisper Turbo est téléchargé automatiquement au premier lancement. Il utilise
 `faster-whisper` en INT8, afin de rester compatible avec les GPU à 6 Go de VRAM.
+La détection de parole est activée : elle évite notamment que Whisper interprète
+un silence final comme une mention de sous-titrage.
 
 ## Structure du projet
 
