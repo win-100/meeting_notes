@@ -29,6 +29,7 @@ from meeting_minutes.prompt_templates import (
     save_templates,
 )
 from meeting_minutes.subtitles import transcript_as_srt
+from meeting_minutes.transcript_import import load_diarized_transcript
 
 
 load_dotenv()
@@ -122,6 +123,7 @@ def render_artifact_downloads(work):
     work = Path(work)
     document_names = [
         "transcript.txt",
+        "transcript.md",
         "transcript.json",
         "transcript-diarise.srt",
         "minutes.md",
@@ -168,6 +170,22 @@ def render_artifact_downloads(work):
         mime="application/zip",
         key=f"download_zip_{work.name}",
     )
+
+
+def save_final_transcript_artifacts(work, segments, speaker_names):
+    """Save every final transcript representation used by the tabs and export."""
+    for segment in segments:
+        segment.speaker_name = speaker_label(segment.speaker_id, speaker_names)
+    write_text_artifact(work, "transcript.txt", transcript_with_diarization(segments, speaker_names))
+    write_text_artifact(work, "transcript.md", transcript_as_markdown(segments, speaker_names))
+    write_json_artifact(work, "transcript.json", dump(segments))
+    write_text_artifact(work, "transcript-diarise.srt", transcript_as_srt(segments, speaker_names))
+
+
+def clear_meeting_state():
+    """Forget the results from the preceding meeting before loading another one."""
+    for key in ("segments", "minutes", "minutes_context", "speaker_names"):
+        st.session_state.pop(key, None)
 
 
 def speaker_ids(segments):
@@ -268,6 +286,48 @@ with tab_import:
         filename = selected_upload["name"] if isinstance(selected_upload, dict) else selected_upload.name
         st.caption(f"Fichier prêt : {filename}")
 
+    st.divider()
+    st.subheader("Importer un transcript diarisé")
+    uploaded_transcript = st.file_uploader(
+        "Transcript exporté",
+        type=["json", "txt", "srt", "md"],
+        help="Formats pris en charge : JSON, TXT, SRT et Markdown exportés par l’application.",
+        key="diarized_transcript_upload",
+    )
+    if uploaded_transcript is not None:
+        st.caption(f"Transcript prêt : {uploaded_transcript.name}")
+    import_transcript = st.button(
+        "Importer le transcript diarisé",
+        disabled=uploaded_transcript is None,
+        help="Aucun fichier audio n’est nécessaire ; le compte-rendu restera disponible.",
+    )
+
+    if import_transcript and uploaded_transcript is not None:
+        try:
+            content = uploaded_transcript.getvalue().decode("utf-8-sig")
+            imported_segments = load_diarized_transcript(uploaded_transcript.name, content)
+            work = Path("work") / str(uuid.uuid4())
+            work.mkdir(parents=True)
+            write_text_artifact(work, f"imported-transcript{Path(uploaded_transcript.name).suffix.lower()}", content)
+            mappings = {}
+            for segment in imported_segments:
+                if segment.speaker_id not in mappings:
+                    mappings[segment.speaker_id] = segment.speaker_name or segment.speaker_id
+            clear_meeting_state()
+            st.session_state["work"] = work
+            st.session_state["source"] = None
+            st.session_state["participants"] = list(dict.fromkeys(mappings.values()))
+            st.session_state["expected_speakers"] = False
+            st.session_state["segments"] = imported_segments
+            st.session_state["speaker_names"] = mappings
+            st.session_state["audio_available"] = False
+            save_final_transcript_artifacts(work, imported_segments, mappings)
+            st.success("✓ Transcript importé — consultez l’onglet Transcription ou générez le compte-rendu.")
+        except UnicodeDecodeError:
+            st.error("Le transcript doit être encodé en UTF-8.")
+        except ValueError as error:
+            st.error(f"Impossible d’importer ce transcript : {error}")
+
     participants_text = st.text_area("Participants (un par ligne)")
     participants = participants_text.splitlines()
     asr_engine_label = st.selectbox(
@@ -308,9 +368,8 @@ with tab_import:
         st.session_state["source"] = source
         st.session_state["participants"] = participants
         st.session_state["expected_speakers"] = expected
-        st.session_state.pop("segments", None)
-        st.session_state.pop("minutes", None)
-        st.session_state.pop("minutes_context", None)
+        st.session_state["audio_available"] = True
+        clear_meeting_state()
 
         try:
             wav, mp3 = prepare_audio(source, work)
@@ -370,14 +429,8 @@ with tab_transcription:
             mappings[speaker_id] = mapping_columns[index % len(mapping_columns)].selectbox(
                 speaker_id, choices, index=choices.index(current_name), key=f"speaker_mapping_{speaker_id}"
             )
-        for segment in segments:
-            segment.speaker_name = speaker_label(segment.speaker_id, mappings)
-        transcript = transcript_with_diarization(segments, mappings)
         work = st.session_state["work"]
-        write_text_artifact(work, "transcript.txt", transcript)
-        write_text_artifact(work, "transcript.md", transcript_as_markdown(segments, mappings))
-        write_json_artifact(work, "transcript.json", dump(segments))
-        write_text_artifact(work, "transcript-diarise.srt", transcript_as_srt(segments, mappings))
+        save_final_transcript_artifacts(work, segments, mappings)
         with st.expander("Transcript diarisé", expanded=True):
             st.caption("Les heures sont affichées au début de chaque prise de parole.")
             displayed_speakers = list(dict.fromkeys(speaker_label(s.speaker_id, mappings) for s in segments))
@@ -541,4 +594,6 @@ with tab_export:
         st.info("Les fichiers apparaîtront ici après l’import et le traitement d’une réunion.")
     else:
         render_artifact_downloads(st.session_state["work"])
+        if not st.session_state.get("audio_available", False):
+            st.info("Aucun fichier audio n’est associé à ce transcript importé ; son téléchargement n’est donc pas disponible.")
         st.caption("Les sous-titres .srt sont compatibles VLC : Sous-titres > Ajouter un fichier de sous-titres.")

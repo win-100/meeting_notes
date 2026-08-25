@@ -59,7 +59,9 @@ L'interface est organisée en quatre onglets qui suivent le workflow :
 
 1. **Import** : importez un fichier audio (`.mp3`, `.wav`, `.m4a`) ou choisissez
    une vidéo (`.mp4`, `.mkv`) dans le convertisseur navigateur, puis renseignez
-   les participants et lancez la préparation, la transcription et la diarisation ;
+   les participants et lancez la préparation, la transcription et la diarisation.
+   Vous pouvez aussi importer directement un transcript déjà diarisé, issu des
+   exports de l’application (`.json`, `.txt`, `.srt` ou `.md`) ;
 2. **Transcription** : associez les identifiants de locuteurs aux participants
    et vérifiez la transcription diarizée ;
 3. **Compte-rendu** : choisissez un modèle Ollama, complétez ou déduisez le
@@ -119,8 +121,11 @@ des cartes disposant de peu de VRAM.
 
 La section **Audio** propose uniquement `audio.mp3`, dans un téléchargement
 séparé. La section **Documents** propose la transcription finale (`.txt` et
-`.json`), les sous-titres `.srt` et, après génération, `minutes.md`. Son ZIP
-contient seulement ces documents : il n'inclut pas l'audio.
+`.md` et `.json`), les sous-titres `.srt` et, après génération, `minutes.md`.
+Son ZIP contient seulement ces documents : il n'inclut pas l'audio. Lorsqu'un
+transcript est importé directement, les onglets **Transcription**,
+**Compte-rendu** et **Export** restent disponibles, mais aucun audio ne peut
+être téléchargé.
 
 ### Moteur et langue de transcription
 
