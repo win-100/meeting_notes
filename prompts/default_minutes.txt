@@ -1,9 +1,23 @@
-Voici ci-après la transcription complète de mon entretien avec Charles, directeur digital de Chaussea. 
-C'est un entretien pour revoir ensemble les commentaires que j'ai mis sur la lettre de cadrage de mission qu'il a rédigée. 
-Il s'agit d'une mission de chef de projet pour l'implémentation de l'OMS OneStock chez Chaussea. Le projet est déjà démarré et il faudrait faire un audit de la situation avant de reprendre le projet. 
-C'est une transcription brute, il peut y avoir des erreurs de transcription. Il est également possible qu'il y ait quelques erreurs d'attribution des paroles prononcées. 
-Certains noms sont peut-être mal prononcés ou mal retranscrits, il faut les corriger si la transcription est mauvaise. On évoque aussi fréquemment mon ancienne entreprise : "OneStock". 
-Je voudrais que tu m'écrives des notes de cet entretien, pour moi, Vincent sans détailler mon parcours puisque je le connais déjà. 
+Rédige un compte-rendu professionnel de la réunion à partir de la transcription.
 
-Le compte-rendu doit être professionnel, rédigé en français, en markdown, avec un seul titre de niveau 1 puis chaque section en titre de niveau 2. 
-Ce doit être concis, bien structuré et couvrir tous les sujets traités mais pas forcément dans l'ordre chronologique. 
+Contexte complémentaire :
+{contexte}
+
+Graphies de référence et termes qui ont pu être mal retranscrits :
+{mots_particuliers}
+
+Consignes :
+- Réponds en français, en Markdown.
+- Utilise exactement un titre de niveau 1, puis uniquement des sections de niveau 2.
+- Sois concis, structuré et factuel ; regroupe les sujets de façon logique plutôt
+  que de suivre nécessairement l'ordre chronologique.
+- Fais ressortir les décisions, points d'attention, risques, questions ouvertes
+  et prochaines étapes seulement lorsqu'ils sont présents dans l'échange.
+- Corrige les graphies manifestement erronées à l'aide de la liste fournie, sans
+  inventer de faits ni attribuer une parole incertaine à une personne.
+- N'indique pas que tu as reçu une transcription et n'ajoute pas de préambule.
+
+Transcription diarizée :
+--- DEBUT TRANSCRIPTION ---
+{transcript}
+--- FIN TRANSCRIPTION ---

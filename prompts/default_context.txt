@@ -1,0 +1,17 @@
+À partir de la transcription ci-dessous, déduis le contexte utile pour préparer
+un compte-rendu. Réponds exclusivement en français et uniquement avec un court
+texte de contexte factuel : type de réunion, objectifs, projet ou organisation
+concernés, personnes et rôles lorsqu'ils sont certains.
+Ne fais pas le compte-rendu, je veux juste le contexte de la réunion.
+
+N'invente aucune information. En cas d'incertitude, reste neutre ou omets le
+point. Ne rédige pas le compte-rendu et ne répète pas toute la transcription.
+
+Les graphies de référence suivantes peuvent corriger des erreurs de
+transcription :
+{mots_particuliers}
+
+Transcription :
+--- DEBUT TRANSCRIPTION ---
+{transcript}
+--- FIN TRANSCRIPTION ---

@@ -20,12 +20,25 @@ from meeting_minutes.browser_audio_uploader import video_audio_uploader
 from meeting_minutes.diarization import diarize
 from meeting_minutes.ollama_client import Ollama
 from meeting_minutes.models import dump
+from meeting_minutes.prompt_templates import (
+    PROMPT_VARIABLES,
+    format_special_terms,
+    load_saved_templates,
+    prompt_variables,
+    render_prompt,
+    save_templates,
+)
 from meeting_minutes.subtitles import transcript_as_srt
 
 
 load_dotenv()
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 MINUTES_MODEL = os.getenv("OLLAMA_MINUTES_MODEL", "qwen3.5:4b-q4_K_M")
+PROMPTS_DIRECTORY = Path(__file__).resolve().parent / "prompts"
+DEFAULT_MINUTES_PROMPT_PATH = PROMPTS_DIRECTORY / "default_minutes.txt"
+DEFAULT_CONTEXT_PROMPT_PATH = PROMPTS_DIRECTORY / "default_context.txt"
+SAVED_PROMPTS_PATH = PROMPTS_DIRECTORY / "saved_prompts.json"
+DEFAULT_TEMPLATE_NAME = "Compte-rendu par défaut"
 
 st.set_page_config(page_title="Meeting Minutes")
 st.title("Transcription locale de réunions")
@@ -105,37 +118,37 @@ def artifact_mime_type(path):
 
 
 def render_artifact_downloads(work):
-    """Display one download button per generated artifact and a ZIP archive."""
+    """Display the MP3 separately and archive only the export documents."""
     work = Path(work)
-    artifact_names = [
-        "audio.wav",
-        "audio.mp3",
-        "transcript_raw.txt",
-        "transcript_raw.json",
-        "diarization.json",
+    document_names = [
         "transcript.txt",
-        "transcript.md",
         "transcript.json",
         "transcript-diarise.srt",
         "minutes.md",
     ]
-    artifacts = [
+    documents = [
         (work / name, name, name)
-        for name in artifact_names
+        for name in document_names
         if (work / name).is_file()
     ]
-    source = st.session_state.get("source")
-    if source and Path(source).is_file():
-        source = Path(source)
-        archive_name = source.name if source.name not in artifact_names else f"original_{source.name}"
-        artifacts.insert(0, (source, archive_name, f"fichier source ({source.name})"))
+    audio = work / "audio.mp3"
 
-    if not artifacts:
+    if audio.is_file():
+        st.subheader("Audio")
+        st.download_button(
+            "Télécharger l'audio MP3",
+            data=audio.read_bytes(),
+            file_name=audio.name,
+            mime=artifact_mime_type(audio),
+            key=f"download_audio_{work.name}",
+        )
+
+    if not documents:
         return
 
-    st.subheader("Téléchargements")
+    st.subheader("Documents")
     columns = st.columns(2)
-    for index, (path, _, label) in enumerate(artifacts):
+    for index, (path, _, label) in enumerate(documents):
         columns[index % len(columns)].download_button(
             f"Télécharger {label}",
             data=path.read_bytes(),
@@ -146,10 +159,10 @@ def render_artifact_downloads(work):
 
     archive = BytesIO()
     with ZipFile(archive, "w", ZIP_DEFLATED) as zip_file:
-        for path, archive_name, _ in artifacts:
+        for path, archive_name, _ in documents:
             zip_file.writestr(archive_name, path.read_bytes())
     st.download_button(
-        "Télécharger tous les fichiers (.zip)",
+        "Télécharger les documents (.zip)",
         data=archive.getvalue(),
         file_name="fichiers-reunion.zip",
         mime="application/zip",
@@ -181,6 +194,30 @@ def speaker_color(speaker, speakers):
         ("#E1F4F4", "#15575A"),
     ]
     return palette[speakers.index(speaker) % len(palette)]
+
+
+def default_minutes_prompt():
+    """Read the shipped prompt so it can be copied into user templates."""
+    return DEFAULT_MINUTES_PROMPT_PATH.read_text(encoding="utf-8")
+
+
+def default_context_prompt():
+    """Read the prompt used to infer a concise meeting context."""
+    return DEFAULT_CONTEXT_PROMPT_PATH.read_text(encoding="utf-8")
+
+
+def load_selected_minutes_template():
+    """Load the selected template into the editable fields."""
+    selected = st.session_state["minutes_template_selector"]
+    saved_templates = load_saved_templates(SAVED_PROMPTS_PATH)
+    st.session_state["minutes_prompt_editor"] = (
+        default_minutes_prompt()
+        if selected == DEFAULT_TEMPLATE_NAME
+        else saved_templates.get(selected, default_minutes_prompt())
+    )
+    st.session_state["minutes_prompt_name"] = (
+        "" if selected == DEFAULT_TEMPLATE_NAME else selected
+    )
 
 cuda = False
 try:
@@ -273,6 +310,7 @@ with tab_import:
         st.session_state["expected_speakers"] = expected
         st.session_state.pop("segments", None)
         st.session_state.pop("minutes", None)
+        st.session_state.pop("minutes_context", None)
 
         try:
             wav, mp3 = prepare_audio(source, work)
@@ -362,15 +400,138 @@ with tab_minutes:
     else:
         work = st.session_state["work"]
         transcript = Path(work / "transcript.txt").read_text(encoding="utf-8") if (work / "transcript.txt").is_file() else transcript_with_diarization(st.session_state["segments"], st.session_state.get("speaker_names", {}))
-        prompt = st.text_area("Prompt du compte-rendu", Path("prompts/default_minutes.txt").read_text())
-        if MINUTES_MODEL in models:
-            st.caption(f"Modèle du compte-rendu : `{MINUTES_MODEL}` — reasoning désactivé.")
-            if st.button("Générer le compte-rendu", type="primary"):
-                response = Ollama(OLLAMA_BASE_URL).generate(MINUTES_MODEL, f"{prompt}\n\nVoici la transcription diarizée :\n{transcript}", think=False)
+        st.caption(
+            "Variables du prompt : `{contexte}`, `{mots_particuliers}` et "
+            "`{transcript}`. Elles sont remplacées à la génération."
+        )
+
+        special_terms = st.text_area(
+            "Mots particuliers à corriger (un par ligne)",
+            value="OneStock\nChausséa",
+            key="minutes_special_terms",
+            help="Indiquez ici les orthographes de référence, par exemple des noms propres ou produits.",
+        )
+        formatted_terms = format_special_terms(special_terms)
+
+        if models:
+            default_model_index = models.index(MINUTES_MODEL) if MINUTES_MODEL in models else 0
+            llm_model = st.selectbox(
+                "Modèle Ollama",
+                models,
+                index=default_model_index,
+                key="minutes_model",
+            )
+            st.caption("Le reasoning est désactivé pour limiter la durée de génération.")
+            if st.button("Déduire le contexte depuis la conversation"):
+                context_prompt = render_prompt(
+                    default_context_prompt(),
+                    {
+                        "mots_particuliers": formatted_terms,
+                        "transcript": transcript,
+                    },
+                )
+                try:
+                    with st.spinner("Analyse de la conversation par Ollama…"):
+                        st.session_state["minutes_context"] = Ollama(
+                            OLLAMA_BASE_URL
+                        ).generate(llm_model, context_prompt, think=False).strip()
+                    st.rerun()
+                except Exception as error:
+                    st.error(f"Impossible de déduire le contexte : {error}")
+        else:
+            llm_model = None
+            st.error("Aucun modèle Ollama n'est disponible.")
+
+        context = st.text_area(
+            "Contexte complémentaire",
+            key="minutes_context",
+            placeholder="Ajoutez un contexte, ou utilisez le bouton ci-dessus pour le déduire de la conversation.",
+            help="Ce texte est injecté à la place de {contexte} dans le prompt.",
+        )
+
+        saved_templates = load_saved_templates(SAVED_PROMPTS_PATH)
+        template_options = [DEFAULT_TEMPLATE_NAME, *sorted(saved_templates)]
+        pending_template = st.session_state.pop("minutes_template_pending", None)
+        if pending_template in template_options:
+            st.session_state["minutes_template_selector"] = pending_template
+            load_selected_minutes_template()
+        if "minutes_template_selector" not in st.session_state or st.session_state["minutes_template_selector"] not in template_options:
+            st.session_state["minutes_template_selector"] = DEFAULT_TEMPLATE_NAME
+        if "minutes_prompt_editor" not in st.session_state:
+            st.session_state["minutes_prompt_editor"] = default_minutes_prompt()
+        if "minutes_prompt_name" not in st.session_state:
+            st.session_state["minutes_prompt_name"] = ""
+
+        st.selectbox(
+            "Prompt enregistré",
+            template_options,
+            key="minutes_template_selector",
+            on_change=load_selected_minutes_template,
+        )
+        prompt = st.text_area(
+            "Bloc prompt",
+            key="minutes_prompt_editor",
+            height=360,
+            help="Éditez le gabarit ; les paramètres entre accolades seront injectés à la génération.",
+        )
+        template_name = st.text_input(
+            "Nom pour enregistrer ce prompt",
+            key="minutes_prompt_name",
+            placeholder="Ex. Compte-rendu de comité projet",
+        )
+        save_column, delete_column = st.columns(2)
+        if save_column.button("Enregistrer le prompt"):
+            normalized_name = template_name.strip()
+            if not normalized_name:
+                st.error("Donnez un nom au prompt avant de l'enregistrer.")
+            elif normalized_name == DEFAULT_TEMPLATE_NAME:
+                st.error("Choisissez un autre nom : le prompt par défaut ne peut pas être remplacé.")
+            else:
+                saved_templates[normalized_name] = prompt
+                save_templates(SAVED_PROMPTS_PATH, saved_templates)
+                st.session_state["minutes_template_pending"] = normalized_name
+                st.rerun()
+        if delete_column.button(
+            "Supprimer ce prompt",
+            disabled=st.session_state["minutes_template_selector"] == DEFAULT_TEMPLATE_NAME,
+        ):
+            saved_templates.pop(st.session_state["minutes_template_selector"], None)
+            save_templates(SAVED_PROMPTS_PATH, saved_templates)
+            st.session_state["minutes_template_pending"] = DEFAULT_TEMPLATE_NAME
+            st.rerun()
+
+        variables = prompt_variables(prompt)
+        unknown_variables = [variable for variable in variables if variable not in PROMPT_VARIABLES]
+        if unknown_variables:
+            st.warning(
+                "Variables non reconnues conservées telles quelles : "
+                + ", ".join(f"`{{{variable}}}`" for variable in unknown_variables)
+            )
+        missing_variables = [variable for variable in PROMPT_VARIABLES if variable not in variables]
+        if missing_variables:
+            st.info(
+                "Variables non utilisées par ce prompt : "
+                + ", ".join(f"`{{{variable}}}`" for variable in missing_variables)
+            )
+
+        if llm_model and st.button("Générer le compte-rendu", type="primary"):
+            assembled_prompt = render_prompt(
+                prompt,
+                {
+                    "contexte": context.strip() or "Aucun contexte complémentaire fourni.",
+                    "mots_particuliers": formatted_terms,
+                    "transcript": transcript,
+                },
+            )
+            try:
+                with st.spinner("Génération du compte-rendu par Ollama…"):
+                    response = Ollama(OLLAMA_BASE_URL).generate(
+                        llm_model, assembled_prompt, think=False
+                    )
                 write_text_artifact(work, "minutes.md", response)
                 st.session_state["minutes"] = response
-        elif models:
-            st.error(f"Le modèle requis `{MINUTES_MODEL}` n'est pas installé dans Ollama. Installez-le ou définissez OLLAMA_MINUTES_MODEL avec son tag local exact.")
+            except Exception as error:
+                st.error(f"Impossible de générer le compte-rendu : {error}")
         if "minutes" in st.session_state:
             st.markdown(st.session_state["minutes"])
 

@@ -5,3 +5,4 @@ __pycache__/
 .python/
 .uv-cache/
 .model-cache/
+prompts/saved_prompts.json

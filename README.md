@@ -62,9 +62,11 @@ L'interface est organisée en quatre onglets qui suivent le workflow :
    les participants et lancez la préparation, la transcription et la diarisation ;
 2. **Transcription** : associez les identifiants de locuteurs aux participants
    et vérifiez la transcription diarizée ;
-3. **Compte-rendu** : générez le compte-rendu avec Qwen3.5 4B Q4_K_M ; le
-   reasoning est désactivé ;
-4. **Export** : téléchargez chaque fichier produit ou l'archive `.zip`.
+3. **Compte-rendu** : choisissez un modèle Ollama, complétez ou déduisez le
+   contexte depuis la conversation, gérez des prompts réutilisables et générez
+   le compte-rendu ; le reasoning est désactivé ;
+4. **Export** : téléchargez l'audio MP3 séparément, les documents produits ou
+   leur archive `.zip`.
 
 Pour afficher le fichier téléchargé dans VLC, ouvrez la vidéo puis sélectionnez
 **Sous-titres > Ajouter un fichier de sous-titres** et choisissez le `.srt`.
@@ -93,20 +95,32 @@ Le pipeline produit un WAV mono 16 kHz et un MP3 dans `work/<uuid>/`, puis :
 3. réalise la diarisation avec pyannote ;
 4. aligne les segments de transcription avec le locuteur ayant le plus grand
    recouvrement temporel ;
-5. envoie la transcription annotée à Qwen3.5 4B Q4_K_M via Ollama, avec le
+5. envoie la transcription annotée au modèle Ollama choisi via Ollama, avec le
    reasoning désactivé.
+
+### Prompts de compte-rendu
+
+L'onglet **Compte-rendu** utilise un bloc de prompt éditable. Il peut contenir
+les variables suivantes, remplacées au moment de la génération :
+
+- `{contexte}` : le contexte saisi manuellement ou déduit avec Ollama ;
+- `{mots_particuliers}` : les orthographes de référence, une par ligne ;
+- `{transcript}` : la transcription diarizée de la réunion.
+
+Le prompt fourni par défaut et le prompt de déduction du contexte se trouvent
+respectivement dans `prompts/default_minutes.txt` et
+`prompts/default_context.txt`. Les prompts enregistrés depuis l'interface sont
+conservés localement dans `prompts/saved_prompts.json` (ignoré par Git).
 
 Les modèles sont libérés entre les étapes lourdes afin de mieux fonctionner sur
 des cartes disposant de peu de VRAM.
 
 ### Fichiers téléchargeables
 
-La section **Téléchargements** présente un bouton par fichier disponible : le
-fichier importé, `audio.wav`, `audio.mp3`, la transcription brute (`.txt` et
-`.json`), `diarization.json`, la transcription finale (`.txt`, `.md`, `.json`),
-les sous-titres `.srt` et, après génération, `minutes.md`. Le bouton ZIP
-contient tous les fichiers déjà produits, y compris lorsqu'une étape suivante
-n'a pas été réalisée ou a échoué.
+La section **Audio** propose uniquement `audio.mp3`, dans un téléchargement
+séparé. La section **Documents** propose la transcription finale (`.txt` et
+`.json`), les sous-titres `.srt` et, après génération, `minutes.md`. Son ZIP
+contient seulement ces documents : il n'inclut pas l'audio.
 
 ### Moteur et langue de transcription
 
@@ -133,8 +147,10 @@ meeting_minutes/
   diarization.py          Identification des locuteurs avec pyannote
   alignment.py            Alignement transcription/locuteurs
   ollama_client.py        Client HTTP Ollama
+  prompt_templates.py     Variables et stockage des prompts
   models.py               Modèles de données
 prompts/default_minutes.txt  Prompt de compte-rendu par défaut
+prompts/default_context.txt  Prompt de déduction du contexte
 ```
 
 ## Dépannage
