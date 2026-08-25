@@ -208,9 +208,12 @@ with tab_import:
     st.subheader("1. Importer et préparer la réunion")
     uploaded_audio = st.file_uploader("Fichier audio", type=["mp3", "wav", "m4a"])
     video_audio = video_audio_uploader(key="local_video_to_audio")
-    converted_audio = st.session_state.get("converted_audio")
 
-    if video_audio and not uploaded_audio:
+    # A component value is sent during the rerun triggered by the browser
+    # conversion.  The button itself triggers a later rerun, where that value
+    # is not guaranteed to be returned again.  Keep a server-side snapshot so
+    # clicking the button cannot make the converted video disappear.
+    if video_audio:
         try:
             converted_audio = {
                 "name": video_audio["name"],
@@ -218,11 +221,15 @@ with tab_import:
             }
             st.session_state["converted_audio"] = converted_audio
             st.success(f"✓ Audio extrait localement : {converted_audio['name']}")
-        except (KeyError, ValueError) as error:
+        except (KeyError, ValueError, TypeError) as error:
             st.error(f"Audio extrait par le navigateur invalide : {error}")
-    selected_upload = uploaded_audio or converted_audio
+    converted_audio = st.session_state.get("converted_audio")
+    # An audio file selected with Streamlit takes precedence.  Otherwise use
+    # the snapshot above rather than the component's transient return value.
+    selected_upload = uploaded_audio if uploaded_audio is not None else converted_audio
     if selected_upload:
-        st.caption("Fichier prêt : " + (selected_upload["name"] if isinstance(selected_upload, dict) else selected_upload.name))
+        filename = selected_upload["name"] if isinstance(selected_upload, dict) else selected_upload.name
+        st.caption(f"Fichier prêt : {filename}")
 
     participants_text = st.text_area("Participants (un par ligne)")
     participants = participants_text.splitlines()
@@ -257,7 +264,8 @@ with tab_import:
     if start_transcription and selected_upload:
         work = Path("work") / str(uuid.uuid4())
         work.mkdir(parents=True)
-        source = work / Path(selected_upload["name"] if isinstance(selected_upload, dict) else selected_upload.name).name
+        filename = selected_upload["name"] if isinstance(selected_upload, dict) else selected_upload.name
+        source = work / Path(filename).name
         source.write_bytes(selected_upload["data"] if isinstance(selected_upload, dict) else selected_upload.getbuffer())
         st.session_state["work"] = work
         st.session_state["source"] = source
@@ -270,16 +278,38 @@ with tab_import:
             wav, mp3 = prepare_audio(source, work)
             st.success("✓ Audio préparé")
             Ollama(OLLAMA_BASE_URL).unload_all()
-            raw = transcribe(wav, engine=asr_engine, language=language)
+            asr_progress = st.progress(0, text="Préparation de la transcription…")
+
+            def update_asr_progress(stage, completed, total):
+                if stage == "Découpage de l'audio":
+                    asr_progress.progress(5, text="Découpage de l'audio en segments…")
+                elif completed == 0:
+                    asr_progress.progress(10, text=f"{stage}…")
+                else:
+                    percent = 10 + round(75 * completed / total)
+                    asr_progress.progress(
+                        percent,
+                        text=f"{stage} : segment {completed}/{total}",
+                    )
+
+            raw = transcribe(
+                wav,
+                engine=asr_engine,
+                language=language,
+                progress_callback=update_asr_progress,
+            )
+            asr_progress.progress(85, text="Enregistrement de la transcription…")
             write_text_artifact(work, "transcript_raw.txt", raw_transcript_as_text(raw))
             write_json_artifact(work, "transcript_raw.json", dump(raw))
             st.success("✓ Transcription terminée")
+            asr_progress.progress(90, text="Diarisation des locuteurs…")
             dia = diarize(wav, len(participants) if expected else None)
             write_json_artifact(work, "diarization.json", dump(dia))
             st.success("✓ Diarisation terminée")
             aligned_segments = align_transcription_with_speakers(raw, dia)
             st.session_state["segments"] = merge_consecutive(aligned_segments)
             st.session_state["speaker_names"] = {}
+            asr_progress.progress(100, text="Traitement terminé")
             st.success("✓ Pipeline terminé — consultez l’onglet Transcription")
         except Exception as error:
             st.error(str(error))

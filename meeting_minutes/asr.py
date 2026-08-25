@@ -110,7 +110,7 @@ def _split_on_silence(audio_path, chunk_directory):
     return chunks
 
 
-def _transcribe_parakeet(chunks):
+def _transcribe_parakeet(chunks, progress_callback=None):
     """Transcribe pre-cut WAV chunks locally with Parakeet TDT."""
     from nemo.collections.asr.models import ASRModel
     from omegaconf import open_dict
@@ -124,6 +124,8 @@ def _transcribe_parakeet(chunks):
         if device == "cuda":
             torch.cuda.empty_cache()
 
+        if progress_callback:
+            progress_callback("Chargement du modèle Parakeet", 0, len(chunks))
         model = ASRModel.from_pretrained("nvidia/parakeet-tdt-0.6b-v3").eval()
 
         # CUDA Graphs trigger an illegal memory access on a GTX 1660 SUPER
@@ -134,7 +136,7 @@ def _transcribe_parakeet(chunks):
         model = model.to(device)
 
         segments = []
-        for chunk_path, offset, end in chunks:
+        for index, (chunk_path, offset, end) in enumerate(chunks, start=1):
             with torch.inference_mode():
                 result = model.transcribe([str(chunk_path)], timestamps=True)[0]
 
@@ -159,6 +161,8 @@ def _transcribe_parakeet(chunks):
 
             if device == "cuda":
                 torch.cuda.empty_cache()
+            if progress_callback:
+                progress_callback("Transcription", index, len(chunks))
 
         return segments
     finally:
@@ -168,7 +172,7 @@ def _transcribe_parakeet(chunks):
             torch.cuda.empty_cache()
 
 
-def _transcribe_whisper_turbo(chunks, language):
+def _transcribe_whisper_turbo(chunks, language, progress_callback=None):
     """Transcribe pre-cut WAV chunks with Whisper Turbo."""
     try:
         from faster_whisper import WhisperModel
@@ -185,11 +189,13 @@ def _transcribe_whisper_turbo(chunks, language):
         if device == "cuda":
             torch.cuda.empty_cache()
 
+        if progress_callback:
+            progress_callback("Chargement du modèle Whisper", 0, len(chunks))
         model = WhisperModel(
             "large-v3-turbo", device=device, compute_type=compute_type
         )
         segments = []
-        for chunk_path, offset, _ in chunks:
+        for index, (chunk_path, offset, _) in enumerate(chunks, start=1):
             whisper_segments, _ = model.transcribe(
                 str(chunk_path),
                 language=language,
@@ -223,6 +229,8 @@ def _transcribe_whisper_turbo(chunks, language):
                 for segment in whisper_segments
                 if segment.text.strip()
             )
+            if progress_callback:
+                progress_callback("Transcription", index, len(chunks))
         return segments
     finally:
         del model
@@ -231,7 +239,7 @@ def _transcribe_whisper_turbo(chunks, language):
             torch.cuda.empty_cache()
 
 
-def transcribe(path, engine="whisper_turbo", language="fr"):
+def transcribe(path, engine="whisper_turbo", language="fr", progress_callback=None):
     """Transcribe a local audio file with the selected ASR engine.
 
     All engines receive the same at-most-40-second WAV chunks, with boundaries
@@ -243,6 +251,8 @@ def transcribe(path, engine="whisper_turbo", language="fr"):
 
     with tempfile.TemporaryDirectory(prefix="meeting_notes_asr_") as directory:
         chunk_directory = Path(directory)
+        if progress_callback:
+            progress_callback("Découpage de l'audio", 0, 0)
         boundaries = _split_on_silence(Path(path), chunk_directory)
         chunks = [
             (chunk_directory / f"chunk_{index:05d}.wav", start, end)
@@ -250,6 +260,10 @@ def transcribe(path, engine="whisper_turbo", language="fr"):
         ]
 
         if engine == "whisper_turbo":
+            if progress_callback:
+                return _transcribe_whisper_turbo(chunks, language, progress_callback)
             return _transcribe_whisper_turbo(chunks, language)
         if engine == "parakeet":
+            if progress_callback:
+                return _transcribe_parakeet(chunks, progress_callback)
             return _transcribe_parakeet(chunks)

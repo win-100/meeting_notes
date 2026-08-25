@@ -72,11 +72,11 @@ Pour afficher le fichier téléchargé dans VLC, ouvrez la vidéo puis sélectio
 ### Vidéos : conversion dans le navigateur
 
 Une vidéo est convertie en MP3 mono 16 kHz directement dans le navigateur ;
-le processus Python ne reçoit donc que l'audio. Le premier usage télécharge le
-convertisseur WebAssembly depuis jsDelivr. Pour les enregistrements longs, la
-conversion demande de la mémoire et est recommandée sur ordinateur. Le fichier
-audio résultant est ensuite transmis à Streamlit, dont la limite de message par
-défaut peut nécessiter d'être augmentée pour les réunions très longues :
+le fichier vidéo original ne traverse jamais la connexion Streamlit. Seul le
+MP3 compressé est transmis à l'application, puis normalisé par FFmpeg avant la
+transcription. Le convertisseur WebAssembly est chargé depuis jsDelivr au
+premier usage. Pour les enregistrements longs, la taille maximale des messages
+Streamlit est configurée dans `.streamlit/config.toml`.
 
 Cette limite est configurée dans `.streamlit/config.toml` à `500` Mo pour
 prendre en charge les enregistrements longs. Redémarrez Streamlit après toute

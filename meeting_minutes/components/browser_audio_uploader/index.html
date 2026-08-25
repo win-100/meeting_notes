@@ -86,7 +86,9 @@
         const output = "meeting-audio.mp3";
         show("Préparation de la vidéo dans le navigateur…");
         await ffmpeg.writeFile(source, new Uint8Array(await file.arrayBuffer()));
-        await ffmpeg.exec(["-i", source, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "libmp3lame", "-b:a", "48k", output]);
+        // Keep the payload sent back to Streamlit small: only this compressed
+        // audio crosses the WebSocket, never the original video.
+        await ffmpeg.exec(["-i", source, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "libmp3lame", "-b:a", "24k", output]);
         const audio = await ffmpeg.readFile(output);
         const bytes = audio instanceof Uint8Array ? audio : new TextEncoder().encode(audio);
         show(`Audio prêt (${(bytes.length / 1024 / 1024).toFixed(1)} Mo). Envoi de l’audio…`);
