@@ -206,19 +206,22 @@ tab_import, tab_transcription, tab_minutes, tab_export = st.tabs(
 
 with tab_import:
     st.subheader("1. Importer et préparer la réunion")
-    upload = st.file_uploader("Fichier audio", type=["mp3", "wav", "m4a"])
+    uploaded_audio = st.file_uploader("Fichier audio", type=["mp3", "wav", "m4a"])
     video_audio = video_audio_uploader(key="local_video_to_audio")
+    converted_audio = None
 
-    if video_audio and not upload:
+    if video_audio and not uploaded_audio:
         try:
-            upload = {
+            converted_audio = {
                 "name": video_audio["name"],
                 "data": base64.b64decode(video_audio["data"], validate=True),
             }
-            st.success(f"✓ Audio extrait localement : {upload['name']}")
+            st.success(f"✓ Audio extrait localement : {converted_audio['name']}")
         except (KeyError, ValueError) as error:
             st.error(f"Audio extrait par le navigateur invalide : {error}")
-            upload = None
+    selected_upload = uploaded_audio or converted_audio
+    if selected_upload:
+        st.caption("Fichier prêt : " + (selected_upload["name"] if isinstance(selected_upload, dict) else selected_upload.name))
 
     participants_text = st.text_area("Participants (un par ligne)")
     participants = participants_text.splitlines()
@@ -243,11 +246,18 @@ with tab_import:
         st.caption("Parakeet TDT v3 détecte automatiquement la langue ; ce réglage ne lui est pas transmis.")
     expected = st.checkbox("Utiliser ce nombre comme nombre de locuteurs attendu", value=True)
 
-    if upload and st.button("Préparer, transcrire et diariser", type="primary"):
+    start_transcription = st.button(
+        "Lancer la transcription",
+        type="primary",
+        disabled=selected_upload is None,
+        help="Importez un fichier audio ou terminez la conversion vidéo pour activer ce bouton.",
+    )
+
+    if start_transcription and selected_upload:
         work = Path("work") / str(uuid.uuid4())
         work.mkdir(parents=True)
-        source = work / Path(upload["name"] if isinstance(upload, dict) else upload.name).name
-        source.write_bytes(upload["data"] if isinstance(upload, dict) else upload.getbuffer())
+        source = work / Path(selected_upload["name"] if isinstance(selected_upload, dict) else selected_upload.name).name
+        source.write_bytes(selected_upload["data"] if isinstance(selected_upload, dict) else selected_upload.getbuffer())
         st.session_state["work"] = work
         st.session_state["source"] = source
         st.session_state["participants"] = participants
