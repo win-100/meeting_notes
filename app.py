@@ -39,11 +39,19 @@ def format_timestamp(seconds):
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
+def speaker_label(speaker_id, speaker_names):
+    """Return the selected speaker name, or its diarization ID as a fallback."""
+    selected_name = speaker_names.get(speaker_id)
+    if selected_name and selected_name != "Inconnu":
+        return selected_name
+    return speaker_id or "Inconnu"
+
+
 def transcript_with_diarization(segments, speaker_names):
     """Build the portable, human-readable diarized transcript."""
     lines = []
     for segment in segments:
-        speaker = speaker_names.get(segment.speaker_id) or segment.speaker_id or "Inconnu"
+        speaker = speaker_label(segment.speaker_id, speaker_names)
         lines.append(f"[{format_timestamp(segment.start)}] {speaker}: {segment.text}")
     return "\n".join(lines)
 
@@ -59,7 +67,7 @@ def transcript_as_markdown(segments, speaker_names):
     """Build the readable Markdown version of the final transcript."""
     lines = ["# Transcription", ""]
     for segment in segments:
-        speaker = speaker_names.get(segment.speaker_id) or segment.speaker_id or "Inconnu"
+        speaker = speaker_label(segment.speaker_id, speaker_names)
         lines.extend(
             [
                 f"**[{format_timestamp(segment.start)}] {speaker}**",
@@ -227,7 +235,7 @@ if asr_engine == "parakeet":
     st.caption("Parakeet TDT v3 détecte automatiquement la langue ; ce réglage ne lui est pas transmis.")
 expected = st.checkbox(
     "Utiliser ce nombre comme nombre de locuteurs attendu",
-    value=bool(participants),
+    value=True,
 )
 
 if upload and st.button("Préparer, transcrire et diariser"):
@@ -267,7 +275,7 @@ if "work" in st.session_state and "segments" not in st.session_state:
 
 if "segments" in st.session_state:
     segments = st.session_state["segments"]
-    available_names = ["Inconnu"] + [participant.strip() for participant in participants if participant.strip()]
+    available_names = [participant.strip() for participant in participants if participant.strip()]
     mappings = st.session_state.setdefault("speaker_names", {})
 
     st.subheader("Interlocuteurs")
@@ -275,7 +283,9 @@ if "segments" in st.session_state:
     mapping_columns = st.columns(min(3, max(1, len(speaker_ids(segments)))))
     for index, speaker_id in enumerate(speaker_ids(segments)):
         choices = available_names.copy()
-        current_name = mappings.get(speaker_id, "Inconnu")
+        current_name = mappings.get(speaker_id)
+        if not current_name or current_name == "Inconnu":
+            current_name = speaker_id
         if current_name not in choices:
             choices.append(current_name)
         mappings[speaker_id] = mapping_columns[index % len(mapping_columns)].selectbox(
@@ -286,7 +296,7 @@ if "segments" in st.session_state:
         )
 
     for segment in segments:
-        segment.speaker_name = mappings.get(segment.speaker_id, "Inconnu")
+        segment.speaker_name = speaker_label(segment.speaker_id, mappings)
 
     transcript = transcript_with_diarization(segments, mappings)
     work = st.session_state["work"]
@@ -299,14 +309,14 @@ if "segments" in st.session_state:
         st.caption("Les heures sont affichées au début de chaque prise de parole.")
         displayed_speakers = list(
             dict.fromkeys(
-                mappings.get(segment.speaker_id) or segment.speaker_id or "Inconnu"
+                speaker_label(segment.speaker_id, mappings)
                 for segment in segments
             )
         )
         last_speaker = object()
         dialogue_html = []
         for segment in segments:
-            speaker = mappings.get(segment.speaker_id) or segment.speaker_id or "Inconnu"
+            speaker = speaker_label(segment.speaker_id, mappings)
             background, text_color = speaker_color(speaker, displayed_speakers)
             header = ""
             if segment.speaker_id != last_speaker:
