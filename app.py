@@ -200,164 +200,143 @@ except Exception:
     models = []
     st.warning("Ollama n'est pas accessible.")
 
-upload = st.file_uploader("Fichier audio", type=["mp3", "wav", "m4a"])
-video_audio = video_audio_uploader(key="local_video_to_audio")
-
-if video_audio and not upload:
-    try:
-        upload = {
-            "name": video_audio["name"],
-            "data": base64.b64decode(video_audio["data"], validate=True),
-        }
-        st.success(f"✓ Audio extrait localement : {upload['name']}")
-    except (KeyError, ValueError) as error:
-        st.error(f"Audio extrait par le navigateur invalide : {error}")
-        upload = None
-participants = st.text_area("Participants (un par ligne)").splitlines()
-asr_engine_label = st.selectbox(
-    "Moteur de transcription",
-    options=list(ASR_ENGINES),
-    help="Whisper Turbo permet de fixer la langue ; Parakeet la détecte automatiquement.",
-)
-asr_engine = ASR_ENGINES[asr_engine_label]
-language_label = st.selectbox(
-    "Langue de transcription",
-    options=list(TRANSCRIPTION_LANGUAGES),
-    index=1,
-    disabled=asr_engine == "parakeet",
-    help=(
-        "Pour une réunion essentiellement en français, choisissez Français. "
-        "Utilisez la détection automatique seulement si les langues sont réellement mélangées."
-    ),
-)
-language = TRANSCRIPTION_LANGUAGES[language_label]
-if asr_engine == "parakeet":
-    st.caption("Parakeet TDT v3 détecte automatiquement la langue ; ce réglage ne lui est pas transmis.")
-expected = st.checkbox(
-    "Utiliser ce nombre comme nombre de locuteurs attendu",
-    value=True,
+tab_import, tab_transcription, tab_minutes, tab_export = st.tabs(
+    ["Import", "Transcription", "Compte-rendu", "Export"]
 )
 
-if upload and st.button("Préparer, transcrire et diariser"):
-    work = Path("work") / str(uuid.uuid4())
-    work.mkdir(parents=True)
+with tab_import:
+    st.subheader("1. Importer et préparer la réunion")
+    upload = st.file_uploader("Fichier audio", type=["mp3", "wav", "m4a"])
+    video_audio = video_audio_uploader(key="local_video_to_audio")
 
-    source = work / Path(upload["name"] if isinstance(upload, dict) else upload.name).name
-    source.write_bytes(upload["data"] if isinstance(upload, dict) else upload.getbuffer())
-    st.session_state["work"] = work
-    st.session_state["source"] = source
-    st.session_state.pop("segments", None)
-    st.session_state.pop("minutes", None)
+    if video_audio and not upload:
+        try:
+            upload = {
+                "name": video_audio["name"],
+                "data": base64.b64decode(video_audio["data"], validate=True),
+            }
+            st.success(f"✓ Audio extrait localement : {upload['name']}")
+        except (KeyError, ValueError) as error:
+            st.error(f"Audio extrait par le navigateur invalide : {error}")
+            upload = None
 
-    try:
-        wav, mp3 = prepare_audio(source, work)
-        st.success("✓ Audio préparé")
-
-        Ollama(OLLAMA_BASE_URL).unload_all()
-
-        raw = transcribe(wav, engine=asr_engine, language=language)
-        write_text_artifact(work, "transcript_raw.txt", raw_transcript_as_text(raw))
-        write_json_artifact(work, "transcript_raw.json", dump(raw))
-        st.success("✓ Transcription terminée")
-
-        dia = diarize(wav, len(participants) if expected else None)
-        write_json_artifact(work, "diarization.json", dump(dia))
-        st.success("✓ Diarisation terminée")
-
-        aligned_segments = align_transcription_with_speakers(raw, dia)
-        st.session_state["segments"] = merge_consecutive(aligned_segments)
-        st.session_state["speaker_names"] = {}
-    except Exception as error:
-        st.error(str(error))
-
-if "work" in st.session_state and "segments" not in st.session_state:
-    render_artifact_downloads(st.session_state["work"])
-
-if "segments" in st.session_state:
-    segments = st.session_state["segments"]
-    available_names = [participant.strip() for participant in participants if participant.strip()]
-    mappings = st.session_state.setdefault("speaker_names", {})
-
-    st.subheader("Interlocuteurs")
-    st.caption("Associez chaque identifiant de diarisation une seule fois. Ces choix restent modifiables.")
-    mapping_columns = st.columns(min(3, max(1, len(speaker_ids(segments)))))
-    for index, speaker_id in enumerate(speaker_ids(segments)):
-        choices = available_names.copy()
-        current_name = mappings.get(speaker_id)
-        if not current_name or current_name == "Inconnu":
-            current_name = speaker_id
-        if current_name not in choices:
-            choices.append(current_name)
-        mappings[speaker_id] = mapping_columns[index % len(mapping_columns)].selectbox(
-            speaker_id,
-            choices,
-            index=choices.index(current_name),
-            key=f"speaker_mapping_{speaker_id}",
-        )
-
-    for segment in segments:
-        segment.speaker_name = speaker_label(segment.speaker_id, mappings)
-
-    transcript = transcript_with_diarization(segments, mappings)
-    work = st.session_state["work"]
-    write_text_artifact(work, "transcript.txt", transcript)
-    write_text_artifact(work, "transcript.md", transcript_as_markdown(segments, mappings))
-    write_json_artifact(work, "transcript.json", dump(segments))
-    write_text_artifact(work, "transcript-diarise.srt", transcript_as_srt(segments, mappings))
-
-    with st.expander("Transcript diarisé", expanded=True):
-        st.caption("Les heures sont affichées au début de chaque prise de parole.")
-        displayed_speakers = list(
-            dict.fromkeys(
-                speaker_label(segment.speaker_id, mappings)
-                for segment in segments
-            )
-        )
-        last_speaker = object()
-        dialogue_html = []
-        for segment in segments:
-            speaker = speaker_label(segment.speaker_id, mappings)
-            background, text_color = speaker_color(speaker, displayed_speakers)
-            header = ""
-            if segment.speaker_id != last_speaker:
-                header = (
-                    '<div style="margin: 9px 0 1px; font-size: 0.85rem; '
-                    f'font-weight: 600; color: {text_color};">'
-                    f"{escape(speaker)} · {format_timestamp(segment.start)}</div>"
-                )
-                last_speaker = segment.speaker_id
-            dialogue_html.append(
-                f"{header}"
-                '<div style="margin: 0 0 2px; padding: 5px 9px; '
-                f'border-radius: 6px; line-height: 1.35; background-color: {background}; '
-                f'color: {text_color};">'
-                f"{escape(segment.text)}</div>",
-            )
-        st.markdown("".join(dialogue_html), unsafe_allow_html=True)
-
-    prompt = st.text_area(
-        "Prompt du compte-rendu",
-        Path("prompts/default_minutes.txt").read_text(),
+    participants_text = st.text_area("Participants (un par ligne)")
+    participants = participants_text.splitlines()
+    asr_engine_label = st.selectbox(
+        "Moteur de transcription",
+        options=list(ASR_ENGINES),
+        help="Whisper Turbo permet de fixer la langue ; Parakeet la détecte automatiquement.",
     )
+    asr_engine = ASR_ENGINES[asr_engine_label]
+    language_label = st.selectbox(
+        "Langue de transcription",
+        options=list(TRANSCRIPTION_LANGUAGES),
+        index=1,
+        disabled=asr_engine == "parakeet",
+        help=(
+            "Pour une réunion essentiellement en français, choisissez Français. "
+            "Utilisez la détection automatique seulement si les langues sont réellement mélangées."
+        ),
+    )
+    language = TRANSCRIPTION_LANGUAGES[language_label]
+    if asr_engine == "parakeet":
+        st.caption("Parakeet TDT v3 détecte automatiquement la langue ; ce réglage ne lui est pas transmis.")
+    expected = st.checkbox("Utiliser ce nombre comme nombre de locuteurs attendu", value=True)
 
-    if MINUTES_MODEL in models:
-        st.caption(f"Modèle du compte-rendu : `{MINUTES_MODEL}` — reasoning désactivé.")
-        if st.button("Générer le compte-rendu"):
-            response = Ollama(OLLAMA_BASE_URL).generate(
-                MINUTES_MODEL,
-                f"{prompt}\n\nVoici la transcription diarizée :\n{transcript}",
-                think=False,
+    if upload and st.button("Préparer, transcrire et diariser", type="primary"):
+        work = Path("work") / str(uuid.uuid4())
+        work.mkdir(parents=True)
+        source = work / Path(upload["name"] if isinstance(upload, dict) else upload.name).name
+        source.write_bytes(upload["data"] if isinstance(upload, dict) else upload.getbuffer())
+        st.session_state["work"] = work
+        st.session_state["source"] = source
+        st.session_state["participants"] = participants
+        st.session_state["expected_speakers"] = expected
+        st.session_state.pop("segments", None)
+        st.session_state.pop("minutes", None)
+
+        try:
+            wav, mp3 = prepare_audio(source, work)
+            st.success("✓ Audio préparé")
+            Ollama(OLLAMA_BASE_URL).unload_all()
+            raw = transcribe(wav, engine=asr_engine, language=language)
+            write_text_artifact(work, "transcript_raw.txt", raw_transcript_as_text(raw))
+            write_json_artifact(work, "transcript_raw.json", dump(raw))
+            st.success("✓ Transcription terminée")
+            dia = diarize(wav, len(participants) if expected else None)
+            write_json_artifact(work, "diarization.json", dump(dia))
+            st.success("✓ Diarisation terminée")
+            aligned_segments = align_transcription_with_speakers(raw, dia)
+            st.session_state["segments"] = merge_consecutive(aligned_segments)
+            st.session_state["speaker_names"] = {}
+            st.success("✓ Pipeline terminé — consultez l’onglet Transcription")
+        except Exception as error:
+            st.error(str(error))
+
+with tab_transcription:
+    st.subheader("2. Vérifier la transcription")
+    if "segments" not in st.session_state:
+        st.info("Importez un fichier et lancez le traitement depuis l’onglet Import.")
+    else:
+        segments = st.session_state["segments"]
+        available_names = [p.strip() for p in st.session_state.get("participants", []) if p.strip()]
+        mappings = st.session_state.setdefault("speaker_names", {})
+        st.caption("Associez chaque identifiant de diarisation une seule fois. Ces choix restent modifiables.")
+        mapping_columns = st.columns(min(3, max(1, len(speaker_ids(segments)))))
+        for index, speaker_id in enumerate(speaker_ids(segments)):
+            choices = available_names.copy()
+            current_name = mappings.get(speaker_id) or speaker_id
+            if current_name not in choices:
+                choices.append(current_name)
+            mappings[speaker_id] = mapping_columns[index % len(mapping_columns)].selectbox(
+                speaker_id, choices, index=choices.index(current_name), key=f"speaker_mapping_{speaker_id}"
             )
-            write_text_artifact(work, "minutes.md", response)
-            st.session_state["minutes"] = response
-    elif models:
-        st.error(
-            f"Le modèle requis `{MINUTES_MODEL}` n'est pas installé dans Ollama. "
-            "Installez-le ou définissez OLLAMA_MINUTES_MODEL avec son tag local exact."
-        )
+        for segment in segments:
+            segment.speaker_name = speaker_label(segment.speaker_id, mappings)
+        transcript = transcript_with_diarization(segments, mappings)
+        work = st.session_state["work"]
+        write_text_artifact(work, "transcript.txt", transcript)
+        write_text_artifact(work, "transcript.md", transcript_as_markdown(segments, mappings))
+        write_json_artifact(work, "transcript.json", dump(segments))
+        write_text_artifact(work, "transcript-diarise.srt", transcript_as_srt(segments, mappings))
+        with st.expander("Transcript diarisé", expanded=True):
+            st.caption("Les heures sont affichées au début de chaque prise de parole.")
+            displayed_speakers = list(dict.fromkeys(speaker_label(s.speaker_id, mappings) for s in segments))
+            last_speaker = object()
+            dialogue_html = []
+            for segment in segments:
+                speaker = speaker_label(segment.speaker_id, mappings)
+                background, text_color = speaker_color(speaker, displayed_speakers)
+                header = ""
+                if segment.speaker_id != last_speaker:
+                    header = f'<div style="margin: 9px 0 1px; font-size: 0.85rem; font-weight: 600; color: {text_color};">{escape(speaker)} · {format_timestamp(segment.start)}</div>'
+                    last_speaker = segment.speaker_id
+                dialogue_html.append(f'{header}<div style="margin: 0 0 2px; padding: 5px 9px; border-radius: 6px; line-height: 1.35; background-color: {background}; color: {text_color};">{escape(segment.text)}</div>')
+            st.markdown("".join(dialogue_html), unsafe_allow_html=True)
 
-    if "minutes" in st.session_state:
-        st.markdown(st.session_state["minutes"])
+with tab_minutes:
+    st.subheader("3. Générer le compte-rendu")
+    if "segments" not in st.session_state:
+        st.info("Terminez le traitement et la vérification dans les onglets précédents.")
+    else:
+        work = st.session_state["work"]
+        transcript = Path(work / "transcript.txt").read_text(encoding="utf-8") if (work / "transcript.txt").is_file() else transcript_with_diarization(st.session_state["segments"], st.session_state.get("speaker_names", {}))
+        prompt = st.text_area("Prompt du compte-rendu", Path("prompts/default_minutes.txt").read_text())
+        if MINUTES_MODEL in models:
+            st.caption(f"Modèle du compte-rendu : `{MINUTES_MODEL}` — reasoning désactivé.")
+            if st.button("Générer le compte-rendu", type="primary"):
+                response = Ollama(OLLAMA_BASE_URL).generate(MINUTES_MODEL, f"{prompt}\n\nVoici la transcription diarizée :\n{transcript}", think=False)
+                write_text_artifact(work, "minutes.md", response)
+                st.session_state["minutes"] = response
+        elif models:
+            st.error(f"Le modèle requis `{MINUTES_MODEL}` n'est pas installé dans Ollama. Installez-le ou définissez OLLAMA_MINUTES_MODEL avec son tag local exact.")
+        if "minutes" in st.session_state:
+            st.markdown(st.session_state["minutes"])
 
-    render_artifact_downloads(work)
-    st.caption("Les sous-titres .srt sont compatibles VLC : Sous-titres > Ajouter un fichier de sous-titres.")
+with tab_export:
+    st.subheader("4. Exporter les résultats")
+    if "work" not in st.session_state:
+        st.info("Les fichiers apparaîtront ici après l’import et le traitement d’une réunion.")
+    else:
+        render_artifact_downloads(st.session_state["work"])
+        st.caption("Les sous-titres .srt sont compatibles VLC : Sous-titres > Ajouter un fichier de sous-titres.")

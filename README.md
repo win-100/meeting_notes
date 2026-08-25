@@ -55,17 +55,16 @@ Assurez-vous qu'Ollama est en cours d'exécution, puis lancez :
 streamlit run app.py
 ```
 
-Dans l'interface :
+L'interface est organisée en quatre onglets qui suivent le workflow :
 
-1. importez un fichier audio (`.mp3`, `.wav`, `.m4a`) ou choisissez une vidéo
-   (`.mp4`, `.mkv`) dans le convertisseur navigateur ;
-2. indiquez les participants si vous les connaissez ;
-3. lancez la préparation, la transcription et la diarisation ;
-4. associez les identifiants de locuteurs aux participants ;
-5. téléchargez chaque fichier produit (audio préparé, résultats intermédiaires,
-   transcription finale et sous-titres) ou leur archive `.zip` ;
-6. générez le compte-rendu avec Qwen3.5 4B Q4_K_M ; le reasoning est désactivé,
-   puis téléchargez-le sous `minutes.md`.
+1. **Import** : importez un fichier audio (`.mp3`, `.wav`, `.m4a`) ou choisissez
+   une vidéo (`.mp4`, `.mkv`) dans le convertisseur navigateur, puis renseignez
+   les participants et lancez la préparation, la transcription et la diarisation ;
+2. **Transcription** : associez les identifiants de locuteurs aux participants
+   et vérifiez la transcription diarizée ;
+3. **Compte-rendu** : générez le compte-rendu avec Qwen3.5 4B Q4_K_M ; le
+   reasoning est désactivé ;
+4. **Export** : téléchargez chaque fichier produit ou l'archive `.zip`.
 
 Pour afficher le fichier téléchargé dans VLC, ouvrez la vidéo puis sélectionnez
 **Sous-titres > Ajouter un fichier de sous-titres** et choisissez le `.srt`.
