@@ -1,6 +1,5 @@
 [server]
-fileWatcherType = "none"
-# The browser component returns the compressed audio as a component value.  A
-# 2 h 30 meeting encoded as 48 kb/s MP3 is normally below this 200 MB limit,
-# even after base64 encoding.
-maxMessageSize = 200
+# The browser video converter sends the resulting MP3 as a component value.
+# The base64 payload is larger than the MP3 itself, so long recordings need a
+# larger WebSocket message limit than Streamlit's default.
+maxMessageSize = 500

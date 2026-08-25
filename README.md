@@ -78,11 +78,9 @@ conversion demande de la mémoire et est recommandée sur ordinateur. Le fichier
 audio résultant est ensuite transmis à Streamlit, dont la limite de message par
 défaut peut nécessiter d'être augmentée pour les réunions très longues :
 
-```toml
-# .streamlit/config.toml
-[server]
-maxMessageSize = 200
-```
+Cette limite est configurée dans `.streamlit/config.toml` à `500` Mo pour
+prendre en charge les enregistrements longs. Redémarrez Streamlit après toute
+modification de cette valeur.
 
 ## Fonctionnement
 

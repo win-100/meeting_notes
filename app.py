@@ -208,7 +208,7 @@ with tab_import:
     st.subheader("1. Importer et préparer la réunion")
     uploaded_audio = st.file_uploader("Fichier audio", type=["mp3", "wav", "m4a"])
     video_audio = video_audio_uploader(key="local_video_to_audio")
-    converted_audio = None
+    converted_audio = st.session_state.get("converted_audio")
 
     if video_audio and not uploaded_audio:
         try:
@@ -216,6 +216,7 @@ with tab_import:
                 "name": video_audio["name"],
                 "data": base64.b64decode(video_audio["data"], validate=True),
             }
+            st.session_state["converted_audio"] = converted_audio
             st.success(f"✓ Audio extrait localement : {converted_audio['name']}")
         except (KeyError, ValueError) as error:
             st.error(f"Audio extrait par le navigateur invalide : {error}")
